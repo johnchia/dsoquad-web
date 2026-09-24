@@ -752,6 +752,21 @@ function bind() {
   }));
 
   $('run').onclick = toggleRun;
+  // Mouse wheel over the scope = the timebase knob: up zooms in (shorter time/div). Trackpads
+  // send many small deltas, so they add up to one step per ~wheel notch.
+  let wheelAcc = 0;
+  $('scope').addEventListener('wheel', (e) => {
+    if (settings.xy) return;
+    e.preventDefault();
+    wheelAcc += e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 400 : 1);
+    const steps = Math.trunc(wheelAcc / 100);
+    if (!steps) return;
+    wheelAcc -= steps * 100;
+    const i = TDIVS.indexOf(settings.tdiv), j = clamp((i < 0 ? TDIVS.findIndex((t) => t >= settings.tdiv) : i) + steps, 0, TDIVS.length - 1);
+    if (TDIVS[j] === settings.tdiv) return;
+    settings.tdiv = TDIVS[j];
+    changed(send.rate);
+  }, { passive: false });
   $('single').onclick = single;
   $('autoset').onclick = autoSet;
   $('connect').onclick = onConnectClick;

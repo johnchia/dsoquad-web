@@ -17,7 +17,8 @@ The browser must run on the machine the DSO is plugged into.
 | `/?sim` | Built-in simulator. CH A follows the generator (square wave when it's on, otherwise a 1 kHz sine); CH B is 2.7 kHz. |
 | `/?play=recordings/square-1khz.dsoq` | Replays a recording made with `python3 tools/dsoq record ... -o web/recordings/x.dsoq`. |
 
-Keys: **Space** run/stop, **S** single, **A** auto set. Drag the markers on the scope: trace zeros (left: A, B,
+Keys: **Space** run/stop, **S** single, **A** auto set. **Mouse wheel** over the scope steps
+the time/div (up zooms in); on a stopped capture it zooms into the samples already taken. Drag the markers on the scope: trace zeros (left: A, B,
 math M), trigger level (right) and trigger position (top). Cursors (Display panel) are dragged
 by their tabs or anywhere along their lines.
 
