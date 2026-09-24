@@ -6,6 +6,7 @@ import { PlaybackTransport, SerialTransport, SimTransport } from './transport.js
 import { COLORS, HDIV, ScopeView, fmtSI } from './view.js';
 import * as Cal from './calibration.js';
 import { openCalDialog } from './cal-ui.js';
+import { openFwDialog, bundledFirmware } from './fw-ui.js';
 import * as Gen from './wavegen.js';
 import { WINDOWS, peak as fftPeak, spectrum } from './fft.js';
 import { SpectrumView } from './spectrum.js';
@@ -38,8 +39,10 @@ const DEFAULTS = {
 let settings = loadSettings();
 let cal = Cal.nominal();   // vertical calibration, read from the device's flash store
 let calSupported = false;  // firmware >= 0.4 has the store
-let calibrating = false;   // the calibration dialog drives the device; the app keeps off
-const live = () => (calibrating ? null : dev);
+let suspended = false;     // a dialog (calibration, firmware update) drives the device; the app keeps off
+const live = () => (suspended ? null : dev);
+let fwExpected = null;
+let devFw = null;     // version being installed: the next connect reports whether it took
 let ranges = FALLBACK_RANGES.slice();
 let dev = null;            // connected Device
 let persist = true;        // false during playback: its settings aren't the user's
@@ -167,6 +170,12 @@ async function connect(transport) {
     d.addEventListener('disconnect', (e) => onLost(e.detail));
     const info = await d.hello();
     $('dev-fw').textContent = info.fw;
+    devFw = info.fw;
+    if (fwExpected !== null) {
+      toast(info.fw === fwExpected || !fwExpected ? `Firmware updated: ${info.fw}` : `Firmware is ${info.fw}, expected ${fwExpected}`, info.fw === fwExpected || !fwExpected ? 'info' : undefined);
+      fwExpected = null;
+    }
+    bundledFirmware().then((m) => { $('firmware').textContent = m && devFw && m.fw !== devFw ? 'Update firmware…' : 'Firmware…'; });
     $('dev-serial').textContent = info.serial;
     if (info.proto !== 1) toast(`Device speaks protocol v${info.proto}; this page expects v1`);
     const t = await d.tables();
@@ -214,9 +223,10 @@ async function disconnect(byUser = true) {
 function onLost(reason) {
   clearInterval(pollTimer);
   dev = null;
-  calibrating = false;
+  suspended = false;
   document.getElementById('cal-dialog').close();
-  status('Device lost, will reconnect when it reappears', 'err');
+  if (fwExpected !== null) status('Restarting into the new firmware…');
+  else status('Device lost, will reconnect when it reappears', 'err');
   console.warn('disconnected:', reason);
   syncControls();
 }
@@ -244,7 +254,7 @@ async function pollState() {
       $('dev-battery').textContent = 'needs firmware ≥ 0.3';
     }
     // Self-heal: the device stops on its own if it thinks the host went away.
-    if (!calibrating && settings.running && !singleArmed && st.acqMode === P.ACQ_STOP) send.acq();
+    if (!suspended && settings.running && !singleArmed && st.acqMode === P.ACQ_STOP) send.acq();
   } catch (e) { report(e); }
 }
 
@@ -554,6 +564,7 @@ function syncControls() {
         + (cal.created ? ` (${cal.created.slice(0, 10)})` : '');
   }
   $('calibrate').disabled = !dev || !calSupported;
+  $('firmware').disabled = !(dev?.t instanceof SerialTransport);
   updateReadouts();
 }
 
@@ -607,10 +618,20 @@ function bind() {
   $('calibrate').onclick = () => openCalDialog({
     dev, ranges, cal,
     suspend(on) {
-      calibrating = on;
+      suspended = on;
       if (!on && dev) send.all();   // put the user's settings back
     },
     onSaved(c) { cal = c; syncControls(); view.invalidate(); },
+    toast,
+  });
+
+  $('firmware').onclick = () => openFwDialog({
+    dev, fw: devFw,
+    suspend(on) {
+      suspended = on;
+      if (!on && dev) send.all();
+    },
+    onCommitted(version) { fwExpected = version ?? ''; },
     toast,
   });
 
@@ -631,7 +652,7 @@ function bind() {
   $('reset').onclick = () => applySettings(merge(DEFAULTS, null));
 
   document.addEventListener('keydown', (e) => {
-    if (calibrating || e.target.closest('input, select, textarea, dialog') || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (suspended || e.target.closest('input, select, textarea, dialog') || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === ' ') { e.preventDefault(); toggleRun(); }
     if (e.key === 's' || e.key === 'S') single();
   });

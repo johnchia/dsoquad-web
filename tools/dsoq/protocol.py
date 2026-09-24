@@ -7,6 +7,7 @@ from dataclasses import dataclass
 HELLO, PING, GET_STATE = 0x01, 0x02, 0x03
 SET_CHANNEL, SET_TIMEBASE, SET_TRIGGER, SET_ACQ, SET_GEN, SET_SYSTEM, SET_WAVE = 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16
 GET_TABLES, STORE_READ, STORE_WRITE = 0x20, 0x21, 0x22
+FW_BEGIN, FW_DATA, FW_COMMIT = 0x23, 0x24, 0x25
 REG_SET, REG_GET, PARAM_SET, PEEK, POKE, REBOOT = 0x30, 0x31, 0x32, 0x33, 0x34, 0x3F
 # Device -> host
 INFO, PONG, STATE, FRAME, TABLE, STORE_DATA, LOG, ACK, REG_VALUE = 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x8E, 0xA0, 0xB1
@@ -15,6 +16,9 @@ MEM_DATA, ROLL = 0xB3, 0x87
 ACK_NAMES = ['OK', 'BAD_LENGTH', 'BAD_VALUE', 'UNKNOWN_TYPE', 'BAD_FRAME', 'BUSY', 'FLASH_ERROR']
 ACQ_STOP, ACQ_NORMAL, ACQ_AUTO, ACQ_SINGLE, ACQ_ROLL = range(5)
 TRIG_KINDS = ['falling', 'rising', 'low', 'high', 'low<w', 'low>w', 'high<w', 'high>w']
+
+APP_BASE, APP_LIMIT = 0x0800C000, 0x0801C000   # APP1 up to the APP3 fallback
+FW_CHUNK = 1024
 
 ADC_ZERO = 54        # SYS convention: code 54 = screen bottom
 CODES_PER_DIV = 25
@@ -179,3 +183,35 @@ def parse_calibration(rec: bytes) -> dict:
         a, b, gain, flags = struct.unpack_from('<fffB', rec, 4 + 13 * k)
         ch[k // 8].append({'a': a, 'b': b, 'gain': gain, 'zero_cal': bool(flags & 1), 'gain_cal': bool(flags & 2)})
     return {'created': created, 'ch': ch}
+
+
+def hex_to_image(text: str) -> bytes:
+    """Intel HEX -> APP1 image starting at APP_BASE (gaps 0xFF, padded to an even length).
+    Refuses anything outside APP1."""
+    base, mem = 0, {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith(':'):
+            continue
+        rec = bytes.fromhex(line[1:])
+        if sum(rec) & 0xFF:
+            raise ValueError(f'bad checksum: {line}')
+        n, addr, typ, data = rec[0], rec[1] << 8 | rec[2], rec[3], rec[4:4 + rec[0]]
+        if typ == 0:
+            for i, v in enumerate(data):
+                mem[base + addr + i] = v
+        elif typ == 1:
+            break
+        elif typ == 2:
+            base = (data[0] << 8 | data[1]) << 4
+        elif typ == 4:
+            base = (data[0] << 8 | data[1]) << 16
+    if not mem:
+        raise ValueError('empty hex file')
+    lo, hi = min(mem), max(mem) + 1
+    if lo != APP_BASE or hi > APP_LIMIT:
+        raise ValueError(f'image 0x{lo:08X}-0x{hi - 1:08X} is not an APP1 image (0x{APP_BASE:08X}-0x{APP_LIMIT - 1:08X})')
+    img = bytearray(b'\xff' * (hi - lo + (hi - lo) % 2))
+    for a, v in mem.items():
+        img[a - lo] = v
+    return bytes(img)

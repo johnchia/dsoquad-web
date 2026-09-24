@@ -116,7 +116,7 @@
           <dt>Uptime</dt><dd id="dev-uptime">–</dd>
           <dt>Calibration</dt><dd id="dev-cal">–</dd>
         </dl>
-        <div class="row buttons"><button id="calibrate" disabled>Calibrate…</button></div>
+        <div class="row buttons"><button id="calibrate" disabled>Calibrate…</button><button id="firmware" disabled>Firmware…</button></div>
         <div class="row"><label for="backlight">Backlight</label><input type="range" id="backlight" min="0" max="100" step="5"><output id="backlight-out"></output></div>
         <div class="row buttons">
           <button id="export">Export settings</button>
@@ -162,6 +162,28 @@
         <span class="spacer"></span>
         <button type="button" id="cal-cancel">Discard</button>
         <button type="button" id="cal-save" class="primary">Save to device</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="fw-dialog">
+    <form method="dialog">
+      <h2>Firmware update</h2>
+      <p class="muted">Installs over USB in a few seconds: no DFU mode, no buttons. The DSO restarts
+        into the new firmware and this page reconnects. Calibration is kept.</p>
+      <dl class="info">
+        <dt>Installed</dt><dd id="fw-installed">–</dd>
+        <dt>With this page</dt><dd id="fw-bundled">–</dd>
+      </dl>
+      <div class="cal-progress"><progress id="fw-progress" max="1" value="0"></progress><span id="fw-msg"></span></div>
+      <p class="muted">If an update ever leaves the DSO unresponsive: power it on holding ▶/|| for DFU mode
+        and copy a <code>.hex</code> to the drive, or hold ○ for the fallback scope.</p>
+      <footer>
+        <button type="button" id="fw-file-btn">Install from file…</button>
+        <input type="file" id="fw-file" accept=".hex" hidden>
+        <span class="spacer"></span>
+        <button type="button" id="fw-close">Close</button>
+        <button type="button" id="fw-install" class="primary" disabled>Install</button>
       </footer>
     </form>
   </dialog>

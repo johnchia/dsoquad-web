@@ -5,6 +5,7 @@ export const HELLO = 0x01, PING = 0x02, GET_STATE = 0x03;
 export const SET_CHANNEL = 0x10, SET_TIMEBASE = 0x11, SET_TRIGGER = 0x12, SET_ACQ = 0x13,
   SET_GEN = 0x14, SET_SYSTEM = 0x15, SET_WAVE = 0x16;
 export const GET_TABLES = 0x20, STORE_READ = 0x21, STORE_WRITE = 0x22;
+export const FW_BEGIN = 0x23, FW_DATA = 0x24, FW_COMMIT = 0x25;
 export const REG_SET = 0x30, REG_GET = 0x31, PARAM_SET = 0x32, PEEK = 0x33, POKE = 0x34, REBOOT = 0x3F;
 // Device -> host
 export const INFO = 0x81, PONG = 0x82, STATE = 0x83, FRAME = 0x84, TABLE = 0x85, STORE_DATA = 0x86, ROLL = 0x87, LOG = 0x8E,
@@ -21,6 +22,8 @@ export const TIMER_HZ = 72e6;
 export const MAX_RATE = 36e6;
 export const GEN_OFF = 0, GEN_SQUARE = 1, GEN_ANALOG = 2;
 export const WAVE_MAX = 512, DAC_MAX_RATE = 2e6;     // separate-channel mode (interleave is M4)
+export const APP_BASE = 0x0800C000, APP_LIMIT = 0x0801C000;  // APP1, up to the APP3 fallback
+export const FW_CHUNK = 1024;
 export const STALE_SAMPLES = 4;   // the FIFO's first few samples are left over from before the capture
 
 const CRC_TABLE = (() => {
@@ -226,6 +229,8 @@ export function parseTable(b) {
 // Request bodies. Each returns a Uint8Array.
 const pack = (n, fill) => { const b = new Uint8Array(n); fill(new DataView(b.buffer)); return b; };
 export const body = {
+  fwRange: (size, crc) => { const b = new Uint8Array(8), v = le(b); v.setUint32(0, size, true); v.setUint32(4, crc, true); return b; },
+  fwData: (offset, data) => { const b = new Uint8Array(4 + data.length); le(b).setUint32(0, offset, true); b.set(data, 4); return b; },
   channel: (ch, range, coupling, offset) => Uint8Array.of(ch, range, coupling, offset),
   timebase: (hz) => pack(4, (v) => v.setUint32(0, Math.round(hz), true)),
   trigger: (source, kind, level, width = 0) => pack(5, (v) => {
@@ -271,4 +276,55 @@ export function buildStore(records) {
     i += 3 + r.length;
   }
   return out;
+}
+
+const CRC32_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let b = 0; b < 8; b++) c = c & 1 ? (c >>> 1) ^ 0xEDB88320 : c >>> 1;
+    t[i] = c >>> 0;
+  }
+  return t;
+})();
+
+/** CRC-32 (IEEE, as zlib): the firmware image checksum. */
+export function crc32(data) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < data.length; i++) c = (c >>> 8) ^ CRC32_TABLE[(c ^ data[i]) & 0xFF];
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+/** Intel HEX text -> APP1 image from APP_BASE (gaps 0xFF, even length). Throws on anything
+ * that isn't an APP1 image. */
+export function hexToImage(text) {
+  let base = 0, lo = Infinity, hi = 0;
+  const recs = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line.startsWith(':')) continue;
+    const r = new Uint8Array(line.length / 2 | 0);
+    for (let i = 0; i < r.length; i++) r[i] = parseInt(line.substr(1 + 2 * i, 2), 16);
+    if (r.reduce((a, b) => a + b, 0) & 0xFF || r.length < 5 || r.length !== r[0] + 5) throw new Error(`bad hex record: ${line}`);
+    const n = r[0], addr = r[1] << 8 | r[2], type = r[3], data = r.subarray(4, 4 + n);
+    if (type === 0) {
+      recs.push([base + addr, data]);
+      lo = Math.min(lo, base + addr); hi = Math.max(hi, base + addr + n);
+    } else if (type === 1) break;
+    else if (type === 2) base = (data[0] << 8 | data[1]) << 4;
+    else if (type === 4) base = (data[0] << 8 | data[1]) * 65536;
+  }
+  if (!recs.length) throw new Error('empty hex file');
+  const hx = (a) => `0x${a.toString(16).toUpperCase().padStart(8, '0')}`;
+  if (lo !== APP_BASE || hi > APP_LIMIT) throw new Error(`not an APP1 image: ${hx(lo)}-${hx(hi - 1)} (APP1 is ${hx(APP_BASE)}-${hx(APP_LIMIT - 1)})`);
+  const img = new Uint8Array((hi - lo + 1) & ~1).fill(0xFF);
+  for (const [a, d] of recs) img.set(d, a - lo);
+  return img;
+}
+
+/** The firmware version string embedded in an image ("0.6.0+<git>-<mmddHHMM>"), or null. */
+export function imageVersion(img) {
+  const s = new TextDecoder('latin1').decode(img);
+  const m = s.match(/\d+\.\d+\.\d+[\w.-]*\+[0-9a-f]{7,}(?:-dirty)?-\d{8}/);
+  return m ? m[0] : null;
 }

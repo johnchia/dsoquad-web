@@ -5,20 +5,23 @@
     python3 tools/dsoq capture --gen 1000 --rate 100000 --png capture.png
     python3 tools/dsoq bench --seconds 5
     python3 tools/dsoq reg get 11
+    python3 tools/dsoq flash                       # install firmware/app/build/dsoq_app1.hex over USB
     python3 tools/dsoq record --gen 1000 --rate 200000 --seconds 3 -o web/recordings/demo.dsoq
 """
 import argparse
 import asyncio
+import binascii
 import csv
 import os
 import sys
 import time
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from device import Device  # noqa: E402
 from protocol import (ACQ_ROLL, ACQ_AUTO, ACQ_NORMAL, ACQ_SINGLE, ACQ_STOP, ADC_ZERO, CODES_PER_DIV,  # noqa: E402
-                      TRIG_KINDS)
+                      TRIG_KINDS, hex_to_image)
 
 MODES = {'auto': ACQ_AUTO, 'normal': ACQ_NORMAL, 'single': ACQ_SINGLE}
 
@@ -215,6 +218,14 @@ async def cmd_cal(dev, a):
                   f"   {'Z' if e['zero_cal'] else '-'}{'G' if e['gain_cal'] else '-'}")
 
 
+async def cmd_flash(dev, a):
+    image = hex_to_image(open(a.hex).read())
+    print(f"running fw {(await dev.hello())['fw']}")
+    print(f'installing {a.hex}: {len(image)} bytes, crc32 {binascii.crc32(image):08x}')
+    await dev.fw_update(image, lambda d, t: print(f'\r  {d}/{t} bytes', end='', flush=True))
+    print('\n  committed; the DSO restarts into the new firmware')
+
+
 async def cmd_reboot(dev, a):
     await dev.reboot(a.fallback)
 
@@ -266,6 +277,8 @@ def main():
     r.add_argument('id', type=int)
     r.add_argument('value', type=int, nargs='?', default=0)
     sub.add_parser('cal')
+    fl = sub.add_parser('flash', help='install firmware over USB (no DFU)')
+    fl.add_argument('hex', nargs='?', default=str(Path(__file__).resolve().parents[2] / 'firmware/app/build/dsoq_app1.hex'))
     rb = sub.add_parser('reboot')
     rb.add_argument('--fallback', action='store_true')
     a = ap.parse_args()

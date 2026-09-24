@@ -12,7 +12,7 @@ Each message is `COBS(type, seq, body..., crc_lo, crc_hi)` followed by a `0x00` 
 - `crc`: CRC-16/CCITT-FALSE (poly `0x1021`, init `0xFFFF`, no reflection, no xor-out) over
   `type, seq, body`, little-endian.
 - All integers are little-endian. Structures are packed (no padding).
-- Host messages are at most 1100 bytes before encoding (only `STORE_WRITE` comes close).
+- Host messages are at most 1100 bytes before encoding (only `STORE_WRITE` and `FW_DATA` come close).
 
 A receiver that sees a bad CRC or length drops the message. The device replies to it with
 `ACK` status `BAD_FRAME` (seq 0) if it could decode anything at all.
@@ -46,6 +46,9 @@ The firmware deals only in raw hardware values; calibration and physical units l
 | `0x20` | GET_TABLES | – | 4 × `TABLE`, then `ACK` |
 | `0x21` | STORE_READ | – | `STORE_DATA` |
 | `0x22` | STORE_WRITE | data, 0–1024 bytes (0 erases) | `ACK` (`FLASH_ERROR` if programming or verification failed) |
+| `0x23` | FW_BEGIN | size u32, crc32 u32 | `ACK` after erasing the staging area (`BAD_LENGTH`: too large to stage) |
+| `0x24` | FW_DATA | offset u32, data (even length, ≤ 1024 bytes) | `ACK` (`BAD_VALUE`: out of range or overwrites different data; `FLASH_ERROR`) |
+| `0x25` | FW_COMMIT | size u32, crc32 u32 | `ACK`, then the device installs the image and resets (`BAD_VALUE`: CRC or vector table wrong, nothing changed) |
 | `0x30` | REG_SET | `object u8`, `value u32` (`__Set`) | `ACK` |
 | `0x31` | REG_GET | `kind u8` (`__Get`) | `REG_VALUE` |
 | `0x32` | PARAM_SET | `addr u8`, `value u8` (`__Set_Param`, FPGA trigger block) | `ACK` |
@@ -160,3 +163,26 @@ restarted capture begins with its 150 pretrigger samples, which are the last one
 (measured: 4 stale + 146 exact duplicates), so the firmware drops them and the stream stays
 continuous. Bit 4 is set only after a settings change re-armed the capture. Throughput tops
 out around 75 kS/s (the FIFO is polled per sample); the UI rolls at ≤ 2 kS/s.
+
+## Firmware update (firmware ≥ 0.6.0)
+
+Replaces the APP1 firmware over USB, no DFU mode needed:
+
+1. `FW_BEGIN` with the image size and its CRC-32 (IEEE/zlib). The image is the APP1 binary from
+   `0x0800C000`, even length (pad with `0xFF`). The device erases a staging area: the flash pages
+   between the end of the running image and APP3 (`0x0801C000`). With a 21 KB firmware that leaves
+   room for a ~42 KB image. A larger image doesn't fit (`BAD_LENGTH`), so it needs DFU.
+2. `FW_DATA` chunks at any offset, in any order. Resending a chunk with the same data is fine.
+3. `FW_COMMIT` with the same size and CRC. The device checks the staged CRC and the vector table
+   (initial stack in APP RAM, a Thumb reset vector inside the image), then ACKs. About 100 ms later it
+   disables interrupts, runs a copy routine from RAM that erases APP1 and programs the staged image
+   over it, and resets. The USB port drops and comes back within ~2 s with the new firmware. The
+   store page (calibration) isn't touched.
+
+Nothing changes until the commit, so an interrupted transfer leaves the old firmware running. A power
+loss during the ~1 s copy leaves APP1 broken. The recovery routes don't depend on it: ○ at power-on
+starts the fallback scope, and DFU mode (▶/|| at power-on) reflashes.
+
+`tools/dsoq flash [file.hex]` (or `make -C firmware/app update`) and the web page's
+**Firmware…** dialog both use this. `make -C firmware/app release` publishes a build with the
+page (`web/firmware/`, with `manifest.json`: `fw`, `file`, `size`, `crc32`).

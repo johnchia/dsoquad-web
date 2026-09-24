@@ -1,11 +1,12 @@
 """Async client for the DSO Quad web-control firmware."""
 import asyncio
+import binascii
 import glob
 import struct
 
 import serial_asyncio_fast
 
-from protocol import (ROLL, MEM_DATA, PEEK, POKE, SET_WAVE, ACK, ACK_NAMES, FRAME, GET_STATE, GET_TABLES, HELLO, INFO, LOG, PARAM_SET, PING,
+from protocol import (FW_BEGIN, FW_CHUNK, FW_COMMIT, FW_DATA, ROLL, MEM_DATA, PEEK, POKE, SET_WAVE, ACK, ACK_NAMES, FRAME, GET_STATE, GET_TABLES, HELLO, INFO, LOG, PARAM_SET, PING,
                       PONG, REBOOT, REG_GET, REG_SET, REG_VALUE, SET_ACQ, SET_CHANNEL, SET_GEN,
                       SET_SYSTEM, SET_TIMEBASE, SET_TRIGGER, STATE, STORE_DATA, STORE_READ, STORE_WRITE, TABLE, Frame, State, decode,
                       encode, parse_table)
@@ -86,8 +87,8 @@ class Device:
         finally:
             del self._pending[seq]
 
-    async def command(self, mtype, body=b''):
-        msgs = await self.request(mtype, body)
+    async def command(self, mtype, body=b'', timeout=2.0):
+        msgs = await self.request(mtype, body, timeout)
         mt, reply = msgs[-1]
         if mt != ACK:
             raise DeviceError(f'expected ACK, got {mt:#x}')
@@ -163,6 +164,16 @@ class Device:
 
     async def store_write(self, blob):
         await self.command(STORE_WRITE, blob)
+
+    async def fw_update(self, image, progress=lambda done, total: None):
+        """Stage `image` (an APP1 binary), then install it: the device resets into it."""
+        crc = binascii.crc32(image)
+        await self.set_acq(0)
+        await self.command(FW_BEGIN, struct.pack('<II', len(image), crc), timeout=10)
+        for off in range(0, len(image), FW_CHUNK):
+            await self.command(FW_DATA, struct.pack('<I', off) + image[off:off + FW_CHUNK], timeout=5)
+            progress(min(off + FW_CHUNK, len(image)), len(image))
+        await self.command(FW_COMMIT, struct.pack('<II', len(image), crc), timeout=5)
 
     async def reboot(self, to_fallback=False):
         await self.command(REBOOT, bytes([1 if to_fallback else 0]))

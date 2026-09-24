@@ -1,6 +1,8 @@
 # DSO Quad web-control firmware (APP1).
 #   make            build build/dsoq_app1.hex
-#   make flash      flash it (DSO must be in DFU mode: hold >|| at power-on)
+#   make flash      flash it via DFU (hold >|| at power-on)
+#   make update     install it over USB into the running firmware (>= 0.6, no DFU)
+#   make release    publish it with the web page (web/firmware/)
 
 TARGET  := build/dsoq_app1
 LIB     := ../lib
@@ -60,8 +62,14 @@ $(TARGET).hex: $(TARGET).elf
 flash: $(TARGET).hex
 	../../tools/dfu-flash.sh $<
 
+update: $(TARGET).hex
+	python3 ../../tools/dsoq flash $(abspath $<)
+
+release: $(TARGET).hex
+	../../tools/fwrelease.py $<
+
 clean:
 	rm -rf build
 
 -include build/obj/*.d
-.PHONY: all flash clean
+.PHONY: all flash update release clean

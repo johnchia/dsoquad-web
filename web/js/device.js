@@ -82,8 +82,8 @@ export class Device extends EventTarget {
     });
   }
 
-  async command(type, body) {
-    const msgs = await this.request(type, body);
+  async command(type, body, timeout) {
+    const msgs = await this.request(type, body, timeout);
     const last = msgs[msgs.length - 1];
     if (last.type !== P.ACK) throw new DeviceError(`expected ACK, got 0x${last.type.toString(16)}`);
     if (last.body[0]) throw new DeviceError(P.ACK_NAMES[last.body[0]] ?? `status ${last.body[0]}`);
@@ -150,6 +150,20 @@ export class Device extends EventTarget {
   }
 
   async storeWrite(blob) { await this.command(P.STORE_WRITE, blob); }
+
+  /** Install an APP1 image over USB (firmware >= 0.6): stage, verify, commit. The device
+   * resets into the new firmware right after the final ACK, so a disconnect follows. */
+  async fwUpdate(image, progress = () => {}) {
+    const crc = P.crc32(image);
+    await this.command(P.SET_ACQ, P.body.acq(P.ACQ_STOP, 100));
+    progress(0, 'erasing');
+    await this.command(P.FW_BEGIN, P.body.fwRange(image.length, crc), 10000);
+    for (let off = 0; off < image.length; off += P.FW_CHUNK) {
+      await this.command(P.FW_DATA, P.body.fwData(off, image.subarray(off, off + P.FW_CHUNK)), 5000);
+      progress(Math.min(off + P.FW_CHUNK, image.length) / image.length, 'writing');
+    }
+    await this.command(P.FW_COMMIT, P.body.fwRange(image.length, crc), 5000);
+  }
 
   setChannel(ch, range, coupling, offset) {
     return this.coalesce(`ch${ch}`, P.SET_CHANNEL, P.body.channel(ch, range, coupling, offset));
