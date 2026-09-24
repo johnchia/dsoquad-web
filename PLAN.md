@@ -164,6 +164,8 @@ Additional host-only commands, because nothing is set on the device:
 | 4 | **DFU mode** (guaranteed) | Hold ▶/|| (button 1) while powering on. The factory bootloader shows up as a USB drive; copy any `.hex` (stock APP, SYS, or ours). The bootloader is in flash we never write, so this always works. | Reflash anything, e.g. the Community Edition `APP_G251.hex` in APP1 | Nothing (factory ROM area) |
 | 5 | **Crash safety net** | The independent watchdog (IWDG) is enabled in our APP. If it resets 3 times in a row (counter kept in backup registers), the next boot takes route 1 automatically instead of starting USB. This stops a buggy build from boot-looping. | Same as 1 | Hardware watchdog + backup domain |
 
+**Status (M1, owner decision):** routes **3 (hold ○ at power-on)** and **4 (DFU)** are the official escapes. Both are independent of our firmware, and route 3 is verified on the unit. Routes 1, 2 and 5 are implemented as conveniences but aren't being formally tested (`exit` was seen to reply and drop USB). A system reset clears the IWDG (RM0008: everything except the backup domain and the reset flags is reset), so handing over to APP3 after `exit` doesn't carry the watchdog along.
+
 Also worth investigating (not required): whether the DFU bootloader can be entered from software (e.g. a magic value, or jumping to it with the right register state). That would allow a **"Firmware update" button in the web UI** with no button presses at all. If it isn't possible, route 4 remains the one-time manual step for reflashing.
 
 ---
@@ -187,7 +189,8 @@ Also worth investigating (not required): whether the DFU bootloader can be enter
 - [ ] Test on Linux (`picocom`), Windows (built-in driver) and macOS. Measure bulk throughput with a Python script. Target ≥ 500 KB/s.
 - [ ] Escape routes 1, 2 and 5 (§3.7): no-init RAM flag + reset, on-device key combo, IWDG with a boot-failure counter. Build these **before** any feature work so every later build is safe to flash. On exit, stop USB and restore the SYS IRQ path, so SYS's USB disk mode works again.
 - [ ] Check that escape route 1 lands in the APP3 fallback, and that route 3 (button 3) still works with our APP1 installed.
-- **Exit criterion:** a stable `/dev/ttyACM0` with measured throughput, and all escape routes tested. If TinyUSB causes trouble here, switch to libopencm3 (proven on this device).
+- **Exit criterion:** a stable `/dev/ttyACM0` with measured throughput, and escape routes 3/4 verified.
+- **Result (v0.1.1):** ✅ enumerates as `1209:0001` → `/dev/serial/by-id/usb-DSO_Quad_community_DSO_Quad_Web_Control_8871B997-if00`. Device→host **689 KB/s**, host→device 368 KB/s, pattern intact, no stray IRQs. Open nit: `__Chk_HDW/__Chk_DFU` don't return string pointers on SYS 1.52 (versions show `n/a`). If TinyUSB causes trouble here, switch to libopencm3 (proven on this device).
 
 ### M2: Acquisition core + protocol (4–7 days)
 - [ ] Wrap SYS FPGA access (`__Set/__Get/__Read_FIFO`) in a small `scope_hw` module: ranges, coupling, offsets, timebase table, trigger config, FIFO reset/arm/poll/read. **Primary reference: the Community Edition source** (`Process.c`, `Menu.c`, `Function.c`, `Calibrat.c`), which is proven on this exact HW/SYS/FPGA. Secondary references: QuadPawn `amx_wavein.c` and LA104 `bios/ds203/adc.cpp`.
