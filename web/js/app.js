@@ -13,6 +13,7 @@ import { SpectrumView } from './spectrum.js';
 import { autoset } from './autoset.js';
 import { MEASUREMENTS, measure } from './measure.js';
 import { download, frameCsv, sharedSettings, shareLink, snapshotPng, stamp } from './export.js';
+import { initAnalyzer } from './analyzer/ui.js';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -59,6 +60,8 @@ let singleArmed = false;
 let lastFrame = null, lastFrameAt = 0;
 const frameTimes = [];
 let pollTimer = null;
+let analyzer = null;       // the Analyzer view; while it's open it owns the device (suspended)
+let analyzerOpen = false;
 
 function merge(def, v) {
   if (Array.isArray(def)) return def.map((d, i) => merge(d, Array.isArray(v) ? v[i] : undefined));
@@ -216,7 +219,7 @@ async function connect(transport) {
     }
     if (!persist) adoptState(await d.state());
     singleArmed = false;
-    send.all();
+    if (analyzerOpen) { suspended = true; await d.setAcq(P.ACQ_STOP, 100); } else send.all();
     status(`Connected · ${transport.label}`, 'ok');
     pollTimer = setInterval(pollState, 1000);
     pollState();
@@ -227,6 +230,7 @@ async function connect(transport) {
     try { await d.close(); } catch { /* already closed */ }
   }
   syncControls();
+  analyzer?.connected();
 }
 
 async function disconnect(byUser = true) {
@@ -243,13 +247,15 @@ async function disconnect(byUser = true) {
   cal = Cal.nominal();
   status('Disconnected');
   syncControls();
+  analyzer?.connected();
 }
 
 function onLost(reason) {
   clearInterval(pollTimer);
   dev = null;
-  suspended = false;
+  suspended = analyzerOpen;
   document.getElementById('cal-dialog').close();
+  analyzer?.connected();
   if (fwExpected !== null) status('Restarting into the new firmware…');
   else status('Device lost, will reconnect when it reappears', 'err');
   console.warn('disconnected:', reason);
@@ -943,6 +949,35 @@ fillFftSelects();
 fillDisplayControls();
 bind();
 syncControls();
+analyzer = initAnalyzer({
+  getDev: () => dev,
+  getCal: () => cal,
+  getRanges: () => ranges,
+  getSim: () => (dev?.t instanceof SimTransport ? dev.t : null),
+  toast,
+});
+document.querySelectorAll('#view button').forEach((b) => { b.onclick = () => setView(b.value); });
+
+/** Scope or Analyzer. The analyzer drives the device itself, so the scope stands down. */
+function setView(v) {
+  const open = v === 'analyzer';
+  document.querySelectorAll('#view button').forEach((b) => b.classList.toggle('active', b.value === v));
+  try { localStorage.setItem('dsoq.view', v); } catch { /* storage unavailable */ }
+  if (open === analyzerOpen) return;
+  analyzerOpen = open;
+  document.body.classList.toggle('analyzer', open);
+  $('analyzer').hidden = !open;
+  if (open) {
+    suspended = true;
+    dev?.setAcq(P.ACQ_STOP, 100).catch(report);
+    analyzer.open(true);
+  } else {
+    analyzer.open(false);
+    suspended = false;
+    if (dev) { singleArmed = false; send.all(); }
+    view.invalidate();
+  }
+}
 document.documentElement.style.setProperty('--a', COLORS.a);
 document.documentElement.style.setProperty('--b', COLORS.b);
 
@@ -956,6 +991,11 @@ if (shared) {
 }
 
 const params = new URLSearchParams(location.search);
+{
+  let v = params.get('view');
+  try { v ??= localStorage.getItem('dsoq.view'); } catch { /* storage unavailable */ }
+  if (v === 'analyzer') setView(v);
+}
 if (params.has('sim')) {
   $('source').value = 'sim';
   connect(new SimTransport());

@@ -6,7 +6,7 @@ import * as P from '../web/js/protocol.js';
 import { analogActual, planPoints } from '../web/js/wavegen.js';
 import { USABLE, captureDiv, logFreqs, planPoint, planSweep, rateForDiv } from '../web/js/analyzer/sweep.js';
 import { analyse, cabs, carg, cdiv, cx, polar } from '../web/js/analyzer/detect.js';
-import { curve, readouts } from '../web/js/analyzer/response.js';
+import { curve, readouts, refineFreqs } from '../web/js/analyzer/response.js';
 import { classical, coneArea, fitDriver, impedance, model, outputImpedance, reFromDc, vasAddedMass, vasSealed } from '../web/js/analyzer/speaker.js';
 
 const near = (a, b, rel, msg) => assert.ok(Math.abs(a - b) <= rel * Math.abs(b), `${msg}: ${a} vs ${b}`);
@@ -160,4 +160,18 @@ test('Vas and amplifier helpers', () => {
   const k = Math.sqrt(1 + 2);
   near(vasSealed({ fs: 40, Qes: 0.4, fc: 40 * k, Qec: 0.4 * k, Vb: 0.01 }).Vas, 0.02, 1e-9, 'Vas sealed');
   near(outputImpedance(2.0, 1.9, 8), 8 * (2 / 1.9 - 1), 1e-12, 'Zout');
+});
+
+test('refinement sharpens the −3 dB points of a band-pass', () => {
+  const h = (f) => { const R = 100, L = 10e-3, C = 100e-9, w = 2 * Math.PI * f; return cdiv(cx(R), cx(R, w * L - 1 / (w * C))); };
+  const pts = (fs) => curve(fs.map((f) => ({ f, freq: f, h: h(f) })));
+  const coarse = logFreqs(500, 50000, 10), c = pts(coarse), r = readouts(c);
+  const q = Math.sqrt(10e-3 / 100e-9) / 100, f0 = 1 / (2 * Math.PI * Math.sqrt(10e-3 * 100e-9));
+  const lo = f0 * (Math.sqrt(1 + 1 / (4 * q * q)) - 1 / (2 * q)), hi = f0 * (Math.sqrt(1 + 1 / (4 * q * q)) + 1 / (2 * q));
+  assert.ok(Math.abs(r.lowF / lo - 1) > 0.005);             // the coarse grid alone is off
+  const extra = refineFreqs(c, r);
+  assert.ok(extra.length >= 6 && extra.length <= 12, `${extra.length} extra points`);
+  const r2 = readouts(pts([...coarse, ...extra].sort((a, b) => a - b)));
+  near(r2.lowF, lo, 0.002, 'low −3 dB'); near(r2.highF, hi, 0.002, 'high −3 dB'); near(r2.peakF, f0, 0.002, 'peak');
+  near(r.peakF, f0, 0.02, 'peak from the coarse grid');
 });

@@ -9,6 +9,7 @@
 <body>
   <header>
     <h1>DSO Quad</h1>
+    <span class="seg view-switch" id="view"><button value="scope" class="active">Scope</button><button value="analyzer" title="Frequency response: sweep the generator through a circuit">Analyzer</button></span>
     <div class="conn">
       <button id="connect" class="primary">Connect</button>
       <select id="source" title="Where frames come from">
@@ -35,7 +36,7 @@
       <button id="save-csv" title="Save the current capture as CSV (volts)">CSV</button>
       <button id="share" title="Copy a link that opens this page with these settings">Link</button>
     </div>
-    <div class="stats"><span id="fps">– fps</span> · <span id="frame-no">frame –</span> · <span id="rate">– S/s</span>
+    <div class="stats"><span id="fps">– fps</span><span class="stats-sep"> · </span><span id="frame-no">frame –</span><span class="stats-sep"> · </span><span id="rate">– S/s</span>
       <a class="help" href="https://github.com/johnchia/dsoquad-web/blob/master/web/README.md" target="_blank" rel="noopener" title="Help: controls, keys and features">?</a>
     </div>
   </header>
@@ -106,6 +107,52 @@
         </div>
       </fieldset>
     </aside>
+    <section class="an-view" id="analyzer" hidden>
+      <div class="an-plot"><canvas id="an-plot"></canvas></div>
+      <div class="an-panel">
+        <fieldset>
+          <legend>Frequency response</legend>
+          <svg class="wiring" viewBox="0 0 300 120" role="img" aria-label="Wiring: wave out to the circuit's input, probe A on the input, probe B on the output, all grounds together">
+            <rect x="110" y="30" width="80" height="50" rx="6" class="box"/>
+            <text x="150" y="60" class="lbl" text-anchor="middle">circuit</text>
+            <line x1="20" y1="45" x2="110" y2="45" class="w-gen"/>
+            <text x="20" y="38" class="lbl gen">wave out</text>
+            <line x1="80" y1="45" x2="80" y2="12" class="w-a"/><circle cx="80" cy="45" r="3" class="dot-a"/>
+            <text x="86" y="16" class="lbl a">A</text>
+            <line x1="190" y1="45" x2="280" y2="45" class="w-b"/><circle cx="240" cy="45" r="3" class="dot-b"/>
+            <line x1="240" y1="45" x2="240" y2="12" class="w-b"/>
+            <text x="246" y="16" class="lbl b">B</text>
+            <text x="262" y="60" class="lbl" text-anchor="middle">load</text>
+            <line x1="20" y1="100" x2="280" y2="100" class="w-gnd"/>
+            <line x1="150" y1="80" x2="150" y2="100" class="w-gnd"/>
+            <text x="20" y="115" class="lbl">all grounds together (wave out, A, B, circuit)</text>
+          </svg>
+          <p class="note">Wave out drives the circuit's input; probe A on the input, B on the output. Result: B / A.</p>
+        </fieldset>
+        <fieldset>
+          <legend>Sweep</legend>
+          <div class="row"><label for="an-from">From</label><input type="number" id="an-from" min="1" max="125000" step="1"><span class="unit">Hz</span></div>
+          <div class="row"><label for="an-to">To</label><input type="number" id="an-to" min="1" max="125000" step="1"><span class="unit">Hz</span></div>
+          <div class="row"><label for="an-ppd">Points</label><select id="an-ppd"><option value="5">5 per decade</option><option value="10">10 per decade</option><option value="20">20 per decade</option><option value="40">40 per decade</option></select></div>
+          <div class="row"><label for="an-level">Level</label><input type="range" id="an-level" min="10" max="100" step="5"><output id="an-level-out"></output></div>
+          <div class="row"><label for="an-average">Readings</label><select id="an-average"><option value="1">1 per point</option><option value="2">2 per point</option><option value="4">4 per point</option><option value="8">8 per point</option></select></div>
+          <div class="row"><label for="an-settle">Settle</label><input type="number" id="an-settle" min="0" max="60000" step="10"><span class="unit">ms extra</span></div>
+          <div class="row"><label for="an-refine">Refine</label><label class="check" title="After the sweep, measure extra points around the −3 dB points and the peak"><input type="checkbox" id="an-refine"> around −3 dB and the peak</label></div>
+          <div class="row"><label>Coupling</label><span class="seg" id="an-coupling"><button value="0">DC</button><button value="1">AC</button></span></div>
+          <div class="row" id="an-sim-row"><label for="an-sim">Simulated</label><select id="an-sim"></select></div>
+          <div class="row note"><label></label><span id="an-estimate"></span></div>
+          <div class="row buttons"><button id="an-start" class="primary">Start sweep</button></div>
+          <div class="cal-progress"><progress id="an-progress" max="1" value="0"></progress><span id="an-msg"></span></div>
+        </fieldset>
+        <fieldset>
+          <legend>Results</legend>
+          <dl class="info" id="an-readouts"></dl>
+          <div class="row buttons"><button id="an-ref-set" title="Keep this sweep as a dashed reference trace">Keep as reference</button><button id="an-ref-clear">Clear reference</button></div>
+          <div class="row buttons"><button id="an-csv">CSV</button><button id="an-png">PNG</button></div>
+        </fieldset>
+      </div>
+    </section>
+
     <section class="controls" id="controls">
       <fieldset class="ch-a">
         <legend><label><input type="checkbox" id="a-on" checked> Channel A</label></legend>

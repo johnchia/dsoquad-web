@@ -2,6 +2,9 @@
 // onbytes(Uint8Array) / ondisconnect(reason). SimTransport and PlaybackTransport run a
 // VirtualDevice in the page, so the UI can be developed without hardware.
 import * as P from './protocol.js';
+import { analogActual, timerDiv } from './wavegen.js';
+import { captureDiv } from './analyzer/sweep.js';
+import { DUTS, SIM_B_DELAY, SIM_B_GAIN } from './analyzer/duts.js';
 
 export const USB_FILTER = { usbVendorId: 0x1209, usbProductId: 0x0001 };
 
@@ -123,7 +126,10 @@ class VirtualTransport {
         this.ack(seq);
         break;
       case P.SET_CHANNEL: s.ch[b[0]] = { range: b[1], coupling: b[2], offset: b[3] }; this.ack(seq); break;
-      case P.SET_TIMEBASE: s.rateReq = v.getUint32(0, true); s.rateActual = P.actualRate(s.rateReq); this.rollT0 = undefined; this.ack(seq); break;
+      case P.SET_TIMEBASE:
+        s.rateReq = v.getUint32(0, true); s.rateActual = P.actualRate(s.rateReq);
+        this.rateExact = s.rateReq > P.MAX_RATE ? P.IL_RATE : P.TIMER_HZ / captureDiv(s.rateReq);   // what the timer really does
+        this.rollT0 = undefined; this.ack(seq); break;
       case P.SET_TRIGGER:
         Object.assign(s, { trigSource: b[0], trigKind: b[1], trigLevel: b[2], trigWidth: v.getUint16(3, true) });
         this.ack(seq);
@@ -137,6 +143,7 @@ class VirtualTransport {
       case P.SET_WAVE:
         if (b.length % 2 || b.length < 4 || b.length > 2 * P.WAVE_MAX) { this.ack(seq, 2); break; }
         this.wave = Array.from({ length: b.length / 2 }, (_, i) => v.getUint16(2 * i, true));
+        this.waveFit = fitWave(this.wave);
         this.ack(seq);
         break;
       case P.STORE_READ: {
@@ -192,6 +199,10 @@ class VirtualTransport {
     b[27] = s.genMode; v.setUint32(28, s.genFreq, true); b[32] = s.genDuty;
     b[33] = s.backlight; b[34] = s.beep; v.setUint32(35, s.frames, true);
     v.setUint16(39, 4100, true); b[41] = 0; v.setUint32(42, Math.floor((performance.now() - this.t0) / 1000), true);
+    if (s.genMode === P.GEN_ANALOG && this.wave) {
+      const d = timerDiv(s.genFreq * this.wave.length);
+      v.setUint16(46, d.psc, true); v.setUint16(48, d.arr, true);
+    }
     return b;
   }
 
@@ -231,6 +242,14 @@ class VirtualTransport {
   }
 }
 
+/** DC and fundamental of a DAC table, in volts: {dc, re, im} (the simulator's smooth output). */
+function fitWave(w) {
+  const n = w.length, k = SIM_DAC_VFS / 4095;
+  let dc = 0, re = 0, im = 0;
+  w.forEach((c, i) => { dc += c; re += c * Math.cos(2 * Math.PI * i / n); im -= c * Math.sin(2 * Math.PI * i / n); });
+  return { dc: dc * k / n, re: 2 * re * k / n, im: 2 * im * k / n };
+}
+
 /** Real table bodies captured from the target unit (SYS 1.52), so the simulator matches it. */
 const RANGE_V = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10];
 const SIM_DAC_VFS = 2.5;   // simulated wave-out span (the real unit: ~2.7 V, see wavegen.js)
@@ -258,6 +277,13 @@ export class SimTransport extends VirtualTransport {
     this.fwName = 'simulator';
     this.simulated = true;
     this.inputsOpen = false;   // true: nothing connected to CH A/B (0 V), as for zero calibration
+    this.dut = null;           // key of DUTS: A on the wave out, B on the circuit's output
+  }
+
+  /** Generator frequency the timer really makes, and the table's fundamental. */
+  _gen() {
+    const s = this.state, w = this.wave;
+    return { f: analogActual(s.genFreq, w.length), ...this.waveFit };
   }
 
   tableBodies() { return simTables(); }
@@ -265,8 +291,12 @@ export class SimTransport extends VirtualTransport {
   voltsA(t) {
     const s = this.state;
     if (this.inputsOpen) return 0;
+    if (s.genMode === P.GEN_ANALOG && this.dut) {
+      const g = this._gen(), ph = 2 * Math.PI * g.f * t;
+      return g.dc + g.re * Math.cos(ph) - g.im * Math.sin(ph);
+    }
     if (s.genMode === P.GEN_ANALOG) {
-      const w = this.wave, p = (t * s.genFreq) % 1;
+      const w = this.wave, p = (t * analogActual(s.genFreq, w.length)) % 1;
       return w[Math.floor(p * w.length)] / 4095 * SIM_DAC_VFS;
     }
     if (s.genMode) {
@@ -278,8 +308,19 @@ export class SimTransport extends VirtualTransport {
 
   voltsB(t) {
     if (this.inputsOpen) return 0;
+    if (this.dut) {
+      if (this.state.genMode !== P.GEN_ANALOG) return 0;
+      const g = this._gen(), dut = DUTS[this.dut], h = dut.h(g.f), h0 = dut.h(1e-3).re;
+      const ph = 2 * Math.PI * g.f * (t - SIM_B_DELAY);
+      // Output phasor: H·(re + j·im); the signal is Re{phasor·e^{jωt}}.
+      const re = h.re * g.re - h.im * g.im, im = h.re * g.im + h.im * g.re;
+      return SIM_B_GAIN * (h0 * g.dc + re * Math.cos(ph) - im * Math.sin(ph));
+    }
     return 1.5 * Math.sin(2 * Math.PI * 2700 * t) + 0.3 * Math.sin(2 * Math.PI * 8100 * t);
   }
+
+  /** Uncalibrated front-end gain (what gain calibration corrects). */
+  frontGain(ch, range) { return ch ? 1.03 - range * 0.004 : 0.975 + range * 0.003; }
 
   code(ch, volts) {
     const c = this.state.ch[ch];
@@ -288,7 +329,7 @@ export class SimTransport extends VirtualTransport {
     const ac = c.coupling ? (ch === 0 && this.state.genMode ? -1.5 : 0) : 0;  // crude AC: remove the square's mean
     // Front-end errors of the size the real unit has, so calibration has something to fix.
     const zero = (ch ? 14 - c.range * 0.5 : 9 + c.range * 0.4) + (ch ? 0.985 : 1.012) * c.offset;
-    const gain = ch ? 1.03 - c.range * 0.004 : 0.975 + c.range * 0.003;
+    const gain = this.frontGain(ch, c.range);
     return Math.min(255, Math.max(0, Math.round(zero + (volts + ac) / vdiv * P.CODES_PER_DIV * gain + noise)));
   }
 
@@ -313,7 +354,7 @@ export class SimTransport extends VirtualTransport {
 
   nextFrame(now) {
     if (this.state.rateActual > P.MAX_RATE) return this.nextInterleaved(now);
-    const s = this.state, n = 4096, pre = 150, rate = s.rateActual;
+    const s = this.state, n = 4096, pre = 150, rate = this.rateExact ?? s.rateActual;
     // Build a longer buffer at a random phase, then find a trigger event to align on.
     const extra = Math.min(40000, Math.ceil(rate / 50) + 2);
     const t0 = Math.random() * 10;

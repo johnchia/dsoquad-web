@@ -39,6 +39,13 @@ by their tabs or anywhere along their lines.
   a server). Opening it loads those settings.
 - **Firmware…** (Device panel): installs the firmware published with the page, or a `.hex`, over
   USB (firmware ≥ 0.6).
+- **Analyzer** (header switch): frequency response of a circuit. The wave out drives its input,
+  probe A reads the input and B the output (three leads: one for the wave out, two probes). A
+  swept sine from 1 Hz to 125 kHz; each point's capture holds a whole number of generator cycles
+  (both share the 72 MHz clock), so gain and phase come from a single DFT bin without leakage.
+  Both channels auto-range per point. Readouts: the peak and the −3 dB points, sharpened by extra
+  points measured around them. A dashed reference trace, CSV and PNG. In the simulator, pick a
+  circuit to sweep (RC, RLC, loudspeaker). Impedance and loudspeaker parameters are next (M6.4).
 
 Settings live in `localStorage` and are pushed to the device on every connect; the page owns
 the settings, not the device. Export/Import in the Device panel saves them as JSON. Channels, timebase and trigger sit in a strip across the bottom; Measure, Display, Generator, FFT and Device are in the sidebar.
@@ -46,4 +53,5 @@ the settings, not the device. Export/Import in the Device panel saves them as JS
 Files: `js/protocol.js` (codec, tested by `node --test tests/*.mjs` against the Python codec),
 `js/device.js` (request/reply matching, coalescing of rapid changes), `js/transport.js`
 (Web Serial, simulator, playback), `js/view.js` (canvas), `js/measure.js` (measurements),
-`js/export.js` (PNG, CSV, links), `js/fw-ui.js` (firmware update), `js/app.js` (UI and settings).
+`js/export.js` (PNG, CSV, links), `js/fw-ui.js` (firmware update), `js/app.js` (UI and settings),
+`js/analyzer/` (sweep planner, detector, sweep runner, readouts, loudspeaker maths, plot, view).

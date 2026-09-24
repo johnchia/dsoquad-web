@@ -48,5 +48,41 @@ export function readouts(c, { refF = null, drop = 3 } = {}) {
   let lo = NaN, hi = NaN;
   for (let i = k; i > 0; i--) if (c[i - 1].gainDb < lvl && c[i].gainDb >= lvl) { lo = crossAt(c, i, lvl, 'gainDb'); break; }
   for (let i = k + 1; i < c.length; i++) if (c[i - 1].gainDb >= lvl && c[i].gainDb < lvl) { hi = crossAt(c, i, lvl, 'gainDb'); break; }
-  return { peakF: c[k].f, peakDb: c[k].gainDb, refDb: ref, lowF: lo, highF: hi };
+  // Peak between the points: a parabola through the top three in (log f, dB).
+  let peakF = c[k].f, peakDb = c[k].gainDb;
+  if (k > 0 && k < c.length - 1) {
+    const [x0, x1, x2] = [c[k - 1], c[k], c[k + 1]].map((p) => Math.log(p.f)), [y0, y1, y2] = [c[k - 1], c[k], c[k + 1]].map((p) => p.gainDb);
+    const d = (x0 - x1) * (x0 - x2) * (x1 - x2);
+    const A = (x2 * (y1 - y0) + x1 * (y0 - y2) + x0 * (y2 - y1)) / d;
+    const B = (x2 * x2 * (y0 - y1) + x1 * x1 * (y2 - y0) + x0 * x0 * (y1 - y2)) / d;
+    if (A < 0) {
+      const xv = Math.min(x2, Math.max(x0, -B / (2 * A)));
+      peakF = Math.exp(xv);
+      peakDb = Math.max(peakDb, y1 + A * (xv - x1) * (xv - x1) + (B + 2 * A * x1) * (xv - x1));
+    }
+  }
+  return { peakF, peakDb, peakIndex: k, refDb: ref, lowF: lo, highF: hi };
+}
+
+/**
+ * Frequencies to add for sharper readouts: `n` log-spaced points inside each interval that
+ * brackets a −3 dB crossing, and either side of the peak (integer Hz, not already swept).
+ */
+export function refineFreqs(c, r, n = 3) {
+  const have = new Set(c.map((p) => p.freq ?? Math.round(p.f)));
+  const out = new Set();
+  const inside = (i) => {
+    if (i < 1 || i >= c.length) return;
+    const a = c[i - 1].f, b = c[i].f;
+    for (let k = 1; k <= n; k++) {
+      const f = Math.round(a * (b / a) ** (k / (n + 1)));
+      if (f > a && f < b && !have.has(f)) out.add(f);
+    }
+  };
+  const bracket = (f) => { if (Number.isFinite(f)) inside(c.findIndex((p) => p.f >= f)); };
+  bracket(r.lowF);
+  bracket(r.highF);
+  const k = r.peakIndex;
+  if (k > 0 && k < c.length - 1) { inside(k); inside(k + 1); }
+  return [...out].sort((a, b) => a - b);
 }
