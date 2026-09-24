@@ -54,6 +54,11 @@ for _ in $(seq 1 60); do
   rm -f "$snap"
   if grep -qi '\.RDY$' <<<"$listing"; then echo "Programmed OK (.RDY). Power-cycle the DSO."; exit 0; fi
   if grep -qi '\.NOT$' <<<"$listing"; then echo "DSO rejected the image (.NOT)." >&2; exit 2; fi
+  if grep -qi '\.ERR$' <<<"$listing"; then
+    echo "DFU reported .ERR. On this unit (DFU 3.10) that has also happened with successful programming;"
+    echo "power-cycle and check the build ID with 'python3 tools/dsoq info'."
+    exit 4
+  fi
 done
 if [ "$seen_gone" = 1 ]; then
   echo "Image written; the DSO re-enumerated to report the result but didn't come back"

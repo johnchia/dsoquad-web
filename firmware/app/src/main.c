@@ -11,7 +11,7 @@
 #include "proto.h"
 #include "scope.h"
 
-#define FW_VERSION "0.2.0-m2"
+#define FW_VERSION "0.2.1-m2+" BUILD_ID
 #define ESCAPE_HOLD_MS 2000
 #define BOOT_OK_MS     5000
 
@@ -343,7 +343,8 @@ int main(void)
   SysTick_Config(sysclk_hz / 1000);
 
   __Clear_Screen(C_BLK);
-  status_line(0, C_CYN, " DSO Quad Web Control  v" FW_VERSION);
+  status_line(0, C_CYN, " DSO Quad Web Control");
+  status_line(8, C_GRY, " fw " FW_VERSION);
   status_line(1, C_WHT, " HW %s  DFU %s", version_str(__Chk_HDW()), version_str(__Chk_DFU()));
   status_line(2, C_WHT, " Clock %s", usb_clock_setup());
   status_line(10, C_GRY, " Exit to scope: hold [] + () for 2 s");

@@ -19,10 +19,12 @@ SRCS := src/startup.c src/escape.c src/main.c src/usb_descriptors.c src/proto.c 
         $(TUSB)/portable/st/stm32_fsdev/fsdev_common.c
 ASRCS := sys/BIOS.S
 
+BUILD_ID := $(shell git describe --always --dirty 2>/dev/null || echo unknown)-$(shell date +%m%d%H%M)
+
 ARCH    := -mcpu=cortex-m3 -mthumb -msoft-float
 CFLAGS  := $(ARCH) -Os -g -std=gnu11 -Wall -Wextra -Wno-unused-parameter \
            -ffunction-sections -fdata-sections -fno-common \
-           -DSTM32F103xE \
+           -DSTM32F103xE -DBUILD_ID='"$(BUILD_ID)"' \
            -Isrc -Isys -I$(TUSB) \
            -I$(LIB)/cmsis-device-f1/Include -I$(LIB)/CMSIS_5/CMSIS/Core/Include
 LDFLAGS := $(ARCH) -nostartfiles -T app1.ld -Wl,--gc-sections -Wl,-Map=$(TARGET).map \
@@ -36,6 +38,9 @@ all: $(TARGET).hex
 build/obj:
 	mkdir -p $@
 
+build/obj/main.o: FORCE
+FORCE:
+
 build/obj/%.o: %.c | build/obj
 	$(CC) $(CFLAGS) -MMD -c $< -o $@
 
@@ -48,6 +53,8 @@ $(TARGET).elf: $(OBJS) app1.ld
 
 $(TARGET).hex: $(TARGET).elf
 	$(OBJCOPY) -O ihex --remove-section=.bios $< $@
+	# The DFU doesn't know start-address records (type 05) and reports .ERR after programming.
+	sed -i '/^:04000005/d' $@
 	../../tools/hexrange.py $@
 
 flash: $(TARGET).hex
