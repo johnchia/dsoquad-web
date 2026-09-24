@@ -172,12 +172,14 @@ Also worth investigating (not required): whether the DFU bootloader can be enter
 
 ### M0: Recon and toolchain (½–1 day)
 - [x] HW **2.6**, SYS **1.52**, APP **gcc Community Edition v1.24** (see §2.1). No SYS upgrade needed.
-- [ ] Confirm the **FPGA version** on the boot screen (expected 2.61) and the DFU version (shown in DFU mode). Reflash FPGA 2.61 only if it's different.
-- [ ] Before anything is overwritten, **export the current calibration and settings** from the USB disk. Copy every file off the disk. The Community Edition keeps its saved settings and calibration there, and the numbers are useful as a starting point for our own calibration table.
-- [ ] Install `arm-none-eabi-gcc` and port the Community Edition's `makefile.bat` to a Linux Makefile (or use the gabonator Win32 script under WSL).
-- [ ] **Rebuild the Community Edition with `App/lds/app3.lds`**, flash it via DFU, and check that **holding button 3 at power-on** boots it and it works (1 kHz cal square wave). This proves the toolchain → DFU → run loop *and* installs the permanent fallback scope (escape route 3) before any of our code runs.
+- [x] Boot screen only shows "hardware ver v2.6.0" (no FPGA version); the FPGA is known-good because the Community Edition runs. DFU disk label: `DFU V3_10_C` (DFU 3.10).
+- [x] Before anything is overwritten, **export the current calibration and settings** from the USB disk. Copy every file off the disk. The Community Edition keeps its saved settings and calibration there, and the numbers are useful as a starting point for our own calibration table.
+- [x] Install `arm-none-eabi-gcc` (14.2) and port the Community Edition's `makefile.bat` to a Linux Makefile (or use the gabonator Win32 script under WSL).
+- [x] **Rebuild the Community Edition with `App/lds/app3.lds`**, flash it via DFU, and check that **holding button 3 at power-on** boots it and it works (1 kHz cal square wave). This proves the toolchain → DFU → run loop *and* installs the permanent fallback scope (escape route 3) before any of our code runs.
 - [ ] Optional baseline: keep the published `APP_G251.hex` ([pmos69.net](http://pmos69.net/dso203/APP_G251.hex)) and the Community Edition source tree as the restore image for escape route 4.
-- [ ] Set up a repo: `firmware/`, `web/`, `tools/` (Python host tools), `docs/`.
+- [x] Set up a repo: `firmware/`, `web/`, `tools/` (Python host tools), `docs/`.
+
+> **M0 notes:** backup + decoded calibration in `backup/` (channel A uncalibrated; B offsets only). Fallback builds with `make -C firmware/fallback` (fixes for modern binutils: Thumb labels in `cortexm3_macro.s`, `-fno-common`). Flash with `tools/dfu-flash.sh`. The VM needs the DSO re-attached after every re-enumeration unless it is passed through by host port.
 
 ### M1: "Hello USB serial" APP (2–4 days) ← **the key feasibility gate**
 - [ ] Minimal APP1 skeleton: linker script at `0x0800C000`, RAM from `0x20003000`, vector table and `SCB->VTOR`, SYS call stubs (`BIOS.S` jump table, taken from QuadPawn/gabonator), and an LCD "hello".

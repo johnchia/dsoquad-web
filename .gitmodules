@@ -1,0 +1,10 @@
+[submodule "firmware/lib/tinyusb"]
+	path = firmware/lib/tinyusb
+	url = https://github.com/hathach/tinyusb.git
+	branch = master
+[submodule "firmware/lib/cmsis-device-f1"]
+	path = firmware/lib/cmsis-device-f1
+	url = https://github.com/STMicroelectronics/cmsis-device-f1.git
+[submodule "firmware/lib/CMSIS_5"]
+	path = firmware/lib/CMSIS_5
+	url = https://github.com/ARM-software/CMSIS_5.git
