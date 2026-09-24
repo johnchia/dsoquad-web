@@ -39,7 +39,7 @@ The firmware deals only in raw hardware values; calibration and physical units l
 | `0x10` | SET_CHANNEL | `ch u8` (0 A, 1 B), `range u8`, `coupling u8` (0 DC, 1 AC), `offset u8` | `ACK` |
 | `0x11` | SET_TIMEBASE | `rate_hz u32` | `ACK` (read `STATE` for the actual rate) |
 | `0x12` | SET_TRIGGER | `source u8` (0 A, 1 B, 2 C, 3 D), `kind u8` (0–7, see below), `level u8` (ADC code), `width u16` (pulse-width threshold, samples) | `ACK` |
-| `0x13` | SET_ACQ | `mode u8` (0 stop, 1 normal, 2 auto, 3 single), `auto_ms u16` | `ACK` |
+| `0x13` | SET_ACQ | `mode u8` (0 stop, 1 normal, 2 auto, 3 single, 4 roll), `auto_ms u16` | `ACK` |
 | `0x14` | SET_GEN | `mode u8` (0 off, 1 square, 2 analog), `freq_hz u32`, `duty u8` (% for square) | `ACK` |
 | `0x16` | SET_WAVE | 2–512 × `u16` DAC codes (0–4095) | `ACK` |
 | `0x15` | SET_SYSTEM | `backlight u8` (0–100), `beep u8` (0–100); 255 = unchanged | `ACK` |
@@ -58,7 +58,9 @@ Trigger kinds (FPGA): 0 falling edge, 1 rising edge, 2 low level, 3 high level,
 
 Acquisition modes: **normal** sends a frame each time the trigger fires. **auto** does the same,
 but if nothing triggers within `auto_ms` it captures untriggered (flag `AUTO`). **single**
-sends one triggered frame, then switches to stop.
+sends one triggered frame, then switches to stop. **roll** (firmware ≥ 0.5.0) captures continuously without
+a trigger and streams the samples as `ROLL` messages as they arrive (about 20 a second, up to
+256 samples each), for slow timebases where a full 4096-sample frame takes seconds.
 
 ## Device → host
 
@@ -70,6 +72,7 @@ sends one triggered frame, then switches to stop.
 | `0x84` | FRAME | see below |
 | `0x85` | TABLE | `id u8`, `elem_size u8`, `count u8`, `count × elem_size` raw bytes |
 | `0x86` | STORE_DATA | `len u16` (0 = nothing stored), `len` bytes |
+| `0x87` | ROLL | roll-mode samples: same layout as `FRAME` (see below) |
 | `0x8E` | LOG | text (not NUL-terminated) |
 | `0xA0` | ACK | `status u8` (0 OK, 1 BAD_LENGTH, 2 BAD_VALUE, 3 UNKNOWN_TYPE, 4 BAD_FRAME, 5 BUSY, 6 FLASH_ERROR) |
 | `0xB1` | REG_VALUE | `kind u8`, `value u32` |
@@ -143,3 +146,11 @@ verifies. The host owns the format:
   `freq_hz` times per second, via DMA2 channel 4 paced by TIM7. `freq_hz × wave_len` must be
   ≤ 2 MS/s, so hosts shorten the table for high frequencies. Upload the table first;
   `SET_WAVE` while running switches tables at once. The host computes every waveform.
+
+## Roll mode (firmware ≥ 0.5.0)
+
+`ROLL` messages use the `FRAME` layout with: `frame_no` = index of the chunk's first sample
+since roll mode started (consecutive chunks continue the count), `flags` bit 3 (roll) set and
+bit 4 set when samples were lost before this chunk, `pretrigger` 0. There is no trigger. The
+firmware restarts the FPGA capture every 4096 samples; the few samples lost there (the stale
+FIFO samples plus the restart) are flagged with bit 4. Sensible up to a few tens of kS/s.

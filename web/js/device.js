@@ -45,10 +45,10 @@ export class Device extends EventTarget {
     for (const f of this.splitter.push(chunk)) {
       let m;
       try { m = P.decode(f); } catch { this.badFrames++; continue; }
-      if (m.type === P.FRAME) {
+      if (m.type === P.FRAME || m.type === P.ROLL) {
         let frame;
         try { frame = P.parseFrame(m.body); } catch { this.badFrames++; continue; }
-        this.dispatchEvent(new CustomEvent('frame', { detail: frame }));
+        this.dispatchEvent(new CustomEvent(m.type === P.ROLL ? 'roll' : 'frame', { detail: frame }));
       } else if (m.type === P.LOG) {
         console.info('device:', new TextDecoder().decode(m.body));
       } else {

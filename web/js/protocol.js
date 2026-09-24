@@ -7,12 +7,12 @@ export const SET_CHANNEL = 0x10, SET_TIMEBASE = 0x11, SET_TRIGGER = 0x12, SET_AC
 export const GET_TABLES = 0x20, STORE_READ = 0x21, STORE_WRITE = 0x22;
 export const REG_SET = 0x30, REG_GET = 0x31, PARAM_SET = 0x32, PEEK = 0x33, POKE = 0x34, REBOOT = 0x3F;
 // Device -> host
-export const INFO = 0x81, PONG = 0x82, STATE = 0x83, FRAME = 0x84, TABLE = 0x85, STORE_DATA = 0x86, LOG = 0x8E,
+export const INFO = 0x81, PONG = 0x82, STATE = 0x83, FRAME = 0x84, TABLE = 0x85, STORE_DATA = 0x86, ROLL = 0x87, LOG = 0x8E,
   ACK = 0xA0, REG_VALUE = 0xB1, MEM_DATA = 0xB3;
 
 export const ACK_NAMES = ['OK', 'BAD_LENGTH', 'BAD_VALUE', 'UNKNOWN_TYPE', 'BAD_FRAME', 'BUSY', 'FLASH_ERROR'];
 export const STORE_MAX = 1024;
-export const ACQ_STOP = 0, ACQ_NORMAL = 1, ACQ_AUTO = 2, ACQ_SINGLE = 3;
+export const ACQ_STOP = 0, ACQ_NORMAL = 1, ACQ_AUTO = 2, ACQ_SINGLE = 3, ACQ_ROLL = 4;
 export const TRIG_KINDS = ['falling', 'rising', 'low', 'high', 'low<w', 'low>w', 'high<w', 'high>w'];
 
 export const ADC_ZERO = 54;       // SYS convention: code 54 = screen bottom
@@ -175,7 +175,7 @@ export function parseFrame(b) {
   const flags = v.getUint8(4);
   return {
     frameNo: v.getUint32(0, true), flags,
-    triggered: !!(flags & 1), auto: !!(flags & 2), last: !!(flags & 4),
+    triggered: !!(flags & 1), auto: !!(flags & 2), last: !!(flags & 4), roll: !!(flags & 8), gap: !!(flags & 16),
     rate: v.getUint32(5, true), ch: readChannels(v, 9),
     trigSource: v.getUint8(15), trigKind: v.getUint8(16), trigLevel: v.getUint8(17),
     pretrigger: v.getUint16(18, true), count, a, b: bb, cd,

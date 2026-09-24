@@ -95,7 +95,7 @@ enum {
   MSG_SET_CHANNEL = 0x10, MSG_SET_TIMEBASE = 0x11, MSG_SET_TRIGGER = 0x12, MSG_SET_ACQ = 0x13,
   MSG_SET_GEN = 0x14, MSG_SET_SYSTEM = 0x15, MSG_SET_WAVE = 0x16, MSG_GET_TABLES = 0x20, MSG_STORE_READ = 0x21, MSG_STORE_WRITE = 0x22,
   MSG_REG_SET = 0x30, MSG_REG_GET = 0x31, MSG_PARAM_SET = 0x32, MSG_PEEK = 0x33, MSG_POKE = 0x34, MSG_REBOOT = 0x3F,
-  MSG_INFO = 0x81, MSG_PONG = 0x82, MSG_STATE = 0x83, MSG_FRAME = 0x84, MSG_TABLE = 0x85, MSG_STORE_DATA = 0x86,
+  MSG_INFO = 0x81, MSG_PONG = 0x82, MSG_STATE = 0x83, MSG_FRAME = 0x84, MSG_TABLE = 0x85, MSG_STORE_DATA = 0x86, MSG_ROLL = 0x87,
   MSG_LOG = 0x8E, MSG_ACK = 0xA0, MSG_REG_VALUE = 0xB1, MSG_MEM_DATA = 0xB3,
 };
 enum { ACK_OK, ACK_BAD_LENGTH, ACK_BAD_VALUE, ACK_UNKNOWN_TYPE, ACK_BAD_FRAME, ACK_BUSY, ACK_FLASH_ERROR };
@@ -181,7 +181,8 @@ static void send_state(uint8_t seq)
 
 static void send_frame(const struct scope_frame *f)
 {
-  proto_tx_begin(&tx, cdc_sink, MSG_FRAME, (uint8_t)f->frame_no);
+  int roll = f->flags & FRAME_ROLL;
+  proto_tx_begin(&tx, cdc_sink, roll ? MSG_ROLL : MSG_FRAME, (uint8_t)f->frame_no);
   proto_tx_u32(&tx, f->frame_no);
   proto_tx_u8(&tx, f->flags);
   proto_tx_u32(&tx, f->rate_actual);
@@ -189,7 +190,7 @@ static void send_frame(const struct scope_frame *f)
   proto_tx_u8(&tx, f->trig_source);
   proto_tx_u8(&tx, f->trig_kind);
   proto_tx_u8(&tx, f->trig_level);
-  proto_tx_u16(&tx, SCOPE_PRETRIGGER);
+  proto_tx_u16(&tx, roll ? 0 : SCOPE_PRETRIGGER);
   proto_tx_u16(&tx, f->count);
   proto_tx_put(&tx, f->samples, (size_t)f->count * 3);
   msg_end();
@@ -347,8 +348,8 @@ static void status_update(void)
   status_line(4, tud_cdc_connected() ? C_GRN : C_GRY, " Port: %s", tud_cdc_connected() ? "open" : "closed");
   status_line(6, C_WHT, " Battery %lu mV   Up %lu s", (unsigned long)__Get(SYS_V_BATTERY),
               (unsigned long)(ms / 1000));
-  static const char *const modes[] = { "stopped", "normal", "auto", "single" };
-  status_line(5, C_WHT, " Acq:  %s  %lu S/s  frames %lu", modes[scope.acq_mode & 3],
+  static const char *const modes[] = { "stopped", "normal", "auto", "single", "roll" };
+  status_line(5, C_WHT, " Acq:  %s  %lu S/s  frames %lu", modes[scope.acq_mode <= ACQ_ROLL ? scope.acq_mode : 0],
               (unsigned long)scope.rate_actual, (unsigned long)scope.frames);
   if (stray_irq) status_line(7, C_YEL, " Disabled stray IRQ %lu", (unsigned long)(stray_irq - 1));
 }

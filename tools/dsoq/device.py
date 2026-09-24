@@ -5,7 +5,7 @@ import struct
 
 import serial_asyncio_fast
 
-from protocol import (MEM_DATA, PEEK, POKE, SET_WAVE, ACK, ACK_NAMES, FRAME, GET_STATE, GET_TABLES, HELLO, INFO, LOG, PARAM_SET, PING,
+from protocol import (ROLL, MEM_DATA, PEEK, POKE, SET_WAVE, ACK, ACK_NAMES, FRAME, GET_STATE, GET_TABLES, HELLO, INFO, LOG, PARAM_SET, PING,
                       PONG, REBOOT, REG_GET, REG_SET, REG_VALUE, SET_ACQ, SET_CHANNEL, SET_GEN,
                       SET_SYSTEM, SET_TIMEBASE, SET_TRIGGER, STATE, STORE_DATA, STORE_READ, STORE_WRITE, TABLE, Frame, State, decode,
                       encode, parse_table)
@@ -28,6 +28,7 @@ class Device:
     def __init__(self):
         self.reader = self.writer = None
         self.frames = asyncio.Queue(maxsize=8)
+        self.rolls = asyncio.Queue()   # roll-mode chunks (unbounded: every sample counts)
         self.bad_frames = 0
         self._seq = 0
         self._pending = {}      # seq -> (future, collected messages)
@@ -60,7 +61,9 @@ class Device:
             except ValueError:
                 self.bad_frames += 1
                 continue
-            if mtype == FRAME:
+            if mtype == ROLL:
+                self.rolls.put_nowait(Frame.parse(body))
+            elif mtype == FRAME:
                 if self.frames.full():
                     self.frames.get_nowait()  # drop the oldest; keep up with the device
                 self.frames.put_nowait(Frame.parse(body))

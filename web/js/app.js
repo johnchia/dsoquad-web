@@ -93,8 +93,14 @@ function trigWidthSamples() {
   return Math.round(clamp(settings.trig.widthUs * 1e-6 * P.actualRate(sampleRate()), 0, 65535));
 }
 
+const ROLL_TDIV = 0.1;   // Auto mode rolls at this time/div and slower
+
+/** Roll mode: continuous untriggered streaming (explicit, or Auto at slow timebases). */
+const rolling = () => settings.mode === 'roll' || (settings.mode === 'auto' && settings.tdiv >= ROLL_TDIV);
+
 function acqMode() {
   if (!settings.running) return P.ACQ_STOP;
+  if (rolling()) return P.ACQ_ROLL;
   return settings.mode === 'normal' ? P.ACQ_NORMAL : P.ACQ_AUTO;
 }
 
@@ -120,7 +126,7 @@ const send = {
     const t = settings.trig;
     live()?.setTrigger(t.source, t.kind, trigLevelCode(), trigWidthSamples()).catch(report);
   },
-  acq() { if (!singleArmed) live()?.setAcq(acqMode(), autoMs()).catch(report); },
+  acq() { roll = null; if (!singleArmed) live()?.setAcq(acqMode(), autoMs()).catch(report); },
   gen() {
     const g = settings.gen, d = live();
     if (!d) return;
@@ -157,6 +163,7 @@ async function connect(transport) {
     await d.open();
     dev = d;
     d.addEventListener('frame', (e) => onFrame(e.detail));
+    d.addEventListener('roll', (e) => onRoll(e.detail));
     d.addEventListener('disconnect', (e) => onLost(e.detail));
     const info = await d.hello();
     $('dev-fw').textContent = info.fw;
@@ -272,6 +279,37 @@ function updateSpectrum(f) {
   spectrumView.invalidate();
 }
 
+// ------------------------------------------------------------------ roll mode
+
+const ROLL_CAP = 8192;
+let roll = null;   // {a, b, cd, n, next, key, rate, chunks, gaps}
+
+/** Appends a roll chunk and shows the newest screenful as a frame (newest sample at the right). */
+function onRoll(c) {
+  if (!settings.running || !rolling()) return;   // a chunk still in flight after a change
+  const key = `${c.rate}/${c.ch.map((x) => `${x.range}.${x.coupling}.${x.offset}`).join()}`;
+  if (!roll || roll.key !== key || c.frameNo < roll.next) {
+    roll = { a: new Uint8Array(ROLL_CAP), b: new Uint8Array(ROLL_CAP), cd: new Uint8Array(ROLL_CAP), n: 0, next: c.frameNo, key, rate: c.rate, chunks: 0, gaps: 0 };
+  }
+  if (c.gap || c.frameNo !== roll.next) roll.gaps++;
+  const k = c.count;
+  if (roll.n + k > ROLL_CAP) {
+    const drop = roll.n + k - ROLL_CAP;
+    for (const x of ['a', 'b', 'cd']) roll[x].copyWithin(0, drop, roll.n);
+    roll.n -= drop;
+  }
+  roll.a.set(c.a, roll.n); roll.b.set(c.b, roll.n); roll.cd.set(c.cd, roll.n);
+  roll.n += k;
+  roll.next = c.frameNo + k;
+  roll.chunks++;
+  const shown = Math.min(roll.n, Math.ceil(HDIV * settings.tdiv * c.rate) + P.STALE_SAMPLES);
+  const from = roll.n - shown;
+  onFrame({
+    ...c, frameNo: roll.chunks, triggered: false, auto: false, roll: true, pretrigger: shown, count: shown,
+    a: roll.a.subarray(from, roll.n), b: roll.b.subarray(from, roll.n), cd: roll.cd.subarray(from, roll.n),
+  });
+}
+
 function onFrame(f) {
   lastFrame = f;
   if (settings.fft.on) updateSpectrum(f);
@@ -323,7 +361,7 @@ function measure(codes, zero, cpd, vdiv, rate) {
 function updateReadouts() {
   const now = performance.now();
   const fps = frameTimes.length > 1 ? (frameTimes.length - 1) / ((frameTimes[frameTimes.length - 1] - frameTimes[0]) / 1000) : 0;
-  $('fps').textContent = `${fps.toFixed(1)} fps`;
+  $('fps').textContent = lastFrame?.roll ? 'rolling' : `${fps.toFixed(1)} fps`;
   const f = lastFrame;
   $('frame-no').textContent = f ? `frame ${f.frameNo}` : 'frame –';
   $('rate').textContent = `${fmtSI(f ? f.rate : P.actualRate(sampleRate()), 'S/s')}`;
@@ -332,7 +370,7 @@ function updateReadouts() {
   const frameTime = 4096 / P.actualRate(sampleRate()) * 1000;
   const stale = now - lastFrameAt > Math.max(600, 3 * frameTime);
   let text = 'Stop', cls = '';
-  if (dev && singleArmed) { text = 'Armed'; cls = 'wait'; } else if (dev && settings.running) {
+  if (dev && settings.running && rolling()) { text = 'Roll'; cls = 'auto'; } else if (dev && singleArmed) { text = 'Armed'; cls = 'wait'; } else if (dev && settings.running) {
     if (!f || stale) { text = settings.mode === 'normal' ? 'Waiting' : 'Acquiring'; cls = 'wait'; } else if (f.auto) { text = 'Auto'; cls = 'auto'; } else { text = "Trig'd"; cls = 'trig'; }
   }
   badge.textContent = text;
@@ -367,7 +405,9 @@ const view = new ScopeView($('scope'), () => ({
   frame: lastFrame,
   ch: settings.ch,
   digital: { on: settings.digital },
-  trig: { source: settings.trig.source, levelDiv: settings.trig.levelDiv, posDiv: settings.trigPosDiv },
+  // Roll: the newest sample sits at the right edge and there's no trigger to mark.
+  trig: { source: settings.trig.source, levelDiv: settings.trig.levelDiv, posDiv: lastFrame?.roll ? HDIV : settings.trigPosDiv },
+  roll: !!lastFrame?.roll,
   tdiv: settings.tdiv,
   vdivs: settings.ch.map((c) => ranges[c.range] ?? 1),
   scale: frameScale,

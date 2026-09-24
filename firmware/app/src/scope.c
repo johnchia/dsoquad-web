@@ -16,12 +16,19 @@ _Static_assert(sizeof(T_attr) == 10, "T_attr layout");
 struct scope_state scope;
 static struct scope_frame frame;
 
-enum { S_IDLE, S_ARM, S_WAIT_TRIG, S_READ };
+enum { S_IDLE, S_ARM, S_WAIT_TRIG, S_READ, S_ROLL_WAIT, S_ROLL };
 static uint8_t st = S_IDLE;
 static uint8_t frame_pending;  // frame buffer holds a frame the host hasn't been sent yet
 static uint8_t forced;        // auto mode gave up waiting and captured untriggered
 static uint32_t armed_at;
 static uint16_t read_idx;
+// Roll mode: continuous unconditional capture, streamed in chunks. The FIFO is re-armed every
+// SCOPE_DEPTH samples; the first few samples after each arm are stale and dropped.
+static uint32_t roll_index;     // samples delivered since roll started
+static uint32_t roll_sent_at;
+static uint16_t roll_block;     // samples read since the last arm
+static uint8_t roll_gap;        // lost samples before the next chunk
+#define ROLL_STALE 4
 
 static void rearm(void)
 {
@@ -88,10 +95,11 @@ int scope_set_trigger(uint8_t source, uint8_t kind, uint8_t level, uint16_t widt
 
 int scope_set_acq(uint8_t mode, uint16_t auto_ms)
 {
-  if (mode > ACQ_SINGLE) return -1;
+  if (mode > ACQ_ROLL) return -1;
   scope.acq_mode = mode;
   scope.auto_ms = auto_ms ? auto_ms : 100;
   st = mode == ACQ_STOP ? S_IDLE : S_ARM;
+  if (mode == ACQ_ROLL) { roll_index = 0; roll_gap = 0; read_idx = 0; }
   return 0;
 }
 
@@ -134,6 +142,16 @@ static void store_sample(uint16_t i, uint32_t w)
 
 static void arm(uint32_t now)
 {
+  if (scope.acq_mode == ACQ_ROLL) {
+    if (roll_index || read_idx) roll_gap = 1;  // re-armed by a settings change: samples lost
+    read_idx = 0;                               // staged samples used the old settings
+    apply_trigger(1);
+    __Set(SYS_FIFO_CLR, 1);
+    roll_block = 0;
+    armed_at = now;
+    st = S_ROLL_WAIT;
+    return;
+  }
   forced = 0;
   apply_trigger(0);
   __Set(SYS_FIFO_CLR, 1);
@@ -192,6 +210,47 @@ const struct scope_frame *scope_poll(uint32_t now)
     if (scope.acq_mode == ACQ_SINGLE) st = S_IDLE;
     else arm(now);
     return &frame;
+
+  case S_ROLL_WAIT:
+    if (__Get(SYS_FIFO_START)) st = S_ROLL;
+    return NULL;
+
+  case S_ROLL: {
+    // read_idx counts samples staged in frame.samples for the next chunk.
+    while (read_idx < ROLL_CHUNK_MAX && roll_block < SCOPE_DEPTH && !__Get(SYS_FIFO_EMPTY)) {
+      uint32_t w = __Read_FIFO();
+      if (roll_block++ >= ROLL_STALE) store_sample(read_idx++, w);
+    }
+    int block_done = roll_block >= SCOPE_DEPTH;
+    // Send about 20 chunks a second, sooner when the chunk is full, and always before re-arming.
+    uint32_t due = scope.rate_actual / 20;
+    if (due < 1) due = 1;
+    if (!block_done && (read_idx == 0 || (read_idx < ROLL_CHUNK_MAX && read_idx < due && now - roll_sent_at < 50))) return NULL;
+    if (block_done) {
+      // The FIFO holds SCOPE_DEPTH samples per capture: start the next one. The samples
+      // between the last read and the new capture's first good sample are lost.
+      __Set(SYS_FIFO_CLR, 1);
+      roll_block = 0;
+      st = S_ROLL_WAIT;
+      if (read_idx == 0) { roll_gap = 1; return NULL; }
+    }
+    GPIOC->BRR = 1u << 5;
+    frame.frame_no = roll_index;
+    frame.flags = FRAME_ROLL | (roll_gap ? FRAME_GAP : 0);
+    frame.rate_actual = scope.rate_actual;
+    frame.ch[0] = scope.ch[0];
+    frame.ch[1] = scope.ch[1];
+    frame.trig_source = scope.trig_source;
+    frame.trig_kind = scope.trig_kind;
+    frame.trig_level = scope.trig_level;
+    frame.count = read_idx;
+    roll_index += read_idx;
+    roll_gap = block_done;
+    read_idx = 0;
+    roll_sent_at = now;
+    frame_pending = 1;
+    return &frame;
+  }
   }
   return NULL;
 }

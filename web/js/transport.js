@@ -123,12 +123,12 @@ class VirtualTransport {
         this.ack(seq);
         break;
       case P.SET_CHANNEL: s.ch[b[0]] = { range: b[1], coupling: b[2], offset: b[3] }; this.ack(seq); break;
-      case P.SET_TIMEBASE: s.rateReq = v.getUint32(0, true); s.rateActual = P.actualRate(s.rateReq); this.ack(seq); break;
+      case P.SET_TIMEBASE: s.rateReq = v.getUint32(0, true); s.rateActual = P.actualRate(s.rateReq); this.rollT0 = undefined; this.ack(seq); break;
       case P.SET_TRIGGER:
         Object.assign(s, { trigSource: b[0], trigKind: b[1], trigLevel: b[2], trigWidth: v.getUint16(3, true) });
         this.ack(seq);
         break;
-      case P.SET_ACQ: s.acqMode = b[0]; s.autoMs = v.getUint16(1, true) || 100; this.armedAt = performance.now(); this.ack(seq); break;
+      case P.SET_ACQ: s.acqMode = b[0]; s.autoMs = v.getUint16(1, true) || 100; this.armedAt = performance.now(); this.rollT0 = undefined; this.ack(seq); break;
       case P.SET_GEN:
         if (b[0] === P.GEN_ANALOG && !(this.wave?.length >= 2)) { this.ack(seq, 2); break; }
         Object.assign(s, { genMode: b[0], genFreq: v.getUint32(1, true), genDuty: b[5] });
@@ -198,8 +198,14 @@ class VirtualTransport {
   /** Called every 10 ms; emits frames when acquisition is running. */
   tick() {
     const s = this.state;
+    if (s.acqMode !== P.ACQ_ROLL) this.rollT0 = undefined;
     if (!s.acqMode) return;
     const now = performance.now();
+    if (s.acqMode === P.ACQ_ROLL) {
+      if (!this.nextRoll) return;   // playback has no roll data
+      for (let body; (body = this.nextRoll(now));) this.send(P.ROLL, 0, body);
+      return;
+    }
     if (now - (this.lastFrameAt || 0) < this.frameInterval()) return;
     const frame = this.nextFrame(now);
     if (!frame) return;
@@ -286,6 +292,25 @@ export class SimTransport extends VirtualTransport {
     return Math.min(255, Math.max(0, Math.round(zero + (volts + ac) / vdiv * P.CODES_PER_DIV * gain + noise)));
   }
 
+  sampleAt(t) {
+    const k = Math.floor(t * 50000);
+    return [this.code(0, this.voltsA(t)), this.code(1, this.voltsB(t)), (k & 1) | ((k >> 2) & 1) << 1];
+  }
+
+  /** Roll mode: the samples due since the last chunk, from a continuous clock. */
+  nextRoll(now) {
+    const s = this.state;
+    if (this.rollT0 === undefined) { this.rollT0 = now; this.rollIndex = 0; }
+    const due = Math.floor((now - this.rollT0) / 1000 * s.rateActual) - this.rollIndex;
+    if (due <= 0) return null;
+    const n = Math.min(due, 256), a = new Uint8Array(n), b = new Uint8Array(n), cd = new Uint8Array(n);
+    for (let i = 0; i < n; i++) [a[i], b[i], cd[i]] = this.sampleAt((this.rollIndex + i) / s.rateActual);
+    const body = this.frameBody(8, a, b, cd, 0);
+    new DataView(body.buffer).setUint32(0, this.rollIndex, true);
+    this.rollIndex += n;
+    return body;
+  }
+
   nextFrame(now) {
     const s = this.state, n = 4096, pre = 150, rate = s.rateActual;
     // Build a longer buffer at a random phase, then find a trigger event to align on.
@@ -294,13 +319,7 @@ export class SimTransport extends VirtualTransport {
     const total = n + extra;
     const src = s.trigSource;
     const raw = [new Uint8Array(total), new Uint8Array(total), new Uint8Array(total)];
-    for (let i = 0; i < total; i++) {
-      const t = t0 + i / rate;
-      raw[0][i] = this.code(0, this.voltsA(t));
-      raw[1][i] = this.code(1, this.voltsB(t));
-      const k = Math.floor(t * 50000);
-      raw[2][i] = (k & 1) | ((k >> 2) & 1) << 1;
-    }
+    for (let i = 0; i < total; i++) [raw[0][i], raw[1][i], raw[2][i]] = this.sampleAt(t0 + i / rate);
     let at = -1;
     if (src < 2) {
       const x = raw[src], L = s.trigLevel;

@@ -17,7 +17,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from device import Device  # noqa: E402
-from protocol import (ACQ_AUTO, ACQ_NORMAL, ACQ_SINGLE, ACQ_STOP, ADC_ZERO, CODES_PER_DIV,  # noqa: E402
+from protocol import (ACQ_ROLL, ACQ_AUTO, ACQ_NORMAL, ACQ_SINGLE, ACQ_STOP, ADC_ZERO, CODES_PER_DIV,  # noqa: E402
                       TRIG_KINDS)
 
 MODES = {'auto': ACQ_AUTO, 'normal': ACQ_NORMAL, 'single': ACQ_SINGLE}
@@ -162,6 +162,28 @@ async def cmd_record(dev, a):
     print(f'recorded {n} frames, {os.path.getsize(a.out) / 1024:.0f} KB -> {a.out}')
 
 
+async def cmd_roll(dev, a):
+    """Stream roll-mode chunks for a while and check the sample count and continuity."""
+    await configure(dev, a)
+    await dev.set_acq(ACQ_ROLL)
+    chunks, samples, gaps, expect, t0 = 0, 0, 0, 0, time.time()
+    try:
+        while time.time() - t0 < a.seconds:
+            c = await asyncio.wait_for(dev.rolls.get(), a.timeout)
+            if c.frame_no != expect:
+                print(f'  index jump: expected {expect}, got {c.frame_no}')
+            gaps += bool(c.flags & 0x10)
+            expect = c.frame_no + len(c.a)
+            chunks += 1
+            samples += len(c.a)
+    finally:
+        await dev.set_acq(ACQ_STOP)
+    dt = time.time() - t0
+    st = await dev.state()
+    print(f'{chunks} chunks, {samples} samples in {dt:.1f} s = {samples / dt:.0f} S/s '
+          f'(rate {st.rate_actual} S/s), {gaps} gap(s), {chunks / dt:.1f} chunks/s')
+
+
 async def cmd_gen(dev, a):
     await dev.set_gen(1 if a.freq > 0 else 0, a.freq or 1000, a.duty)
     print(await dev.state())
@@ -233,6 +255,9 @@ def main():
     acq_args(rec)
     rec.add_argument('--seconds', type=float, default=3)
     rec.add_argument('-o', '--out', required=True)
+    ro = sub.add_parser('roll')
+    acq_args(ro)
+    ro.add_argument('--seconds', type=float, default=5)
     g = sub.add_parser('gen')
     g.add_argument('freq', type=float, help='Hz, 0 = off')
     g.add_argument('--duty', type=int, default=50)

@@ -5,11 +5,15 @@
 #define SCOPE_DEPTH      4096
 #define SCOPE_PRETRIGGER 150   // samples the FPGA keeps before the trigger point
 
-enum { ACQ_STOP = 0, ACQ_NORMAL = 1, ACQ_AUTO = 2, ACQ_SINGLE = 3 };
+enum { ACQ_STOP = 0, ACQ_NORMAL = 1, ACQ_AUTO = 2, ACQ_SINGLE = 3, ACQ_ROLL = 4 };
 
 #define FRAME_TRIGGERED 0x01
 #define FRAME_AUTO      0x02
 #define FRAME_LAST      0x04
+#define FRAME_ROLL      0x08  // roll-mode chunk (sent as MSG_ROLL); frame_no = index of its first sample
+#define FRAME_GAP       0x10  // roll: samples were lost before this chunk
+
+#define ROLL_CHUNK_MAX  256   // samples per roll chunk
 
 struct scope_channel { uint8_t range, coupling, offset; };
 

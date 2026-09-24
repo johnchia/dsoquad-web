@@ -45,6 +45,7 @@ export class ScopeView {
     ['a', 'b'].forEach((name, i) => {
       if (m.ch[i].on) out.push({ id: `pos${i}`, axis: 'y', side: 'l', color: COLORS[name], label: name.toUpperCase(), y: this.yOfDiv(g, m.ch[i].posDiv) });
     });
+    if (m.roll) return out;   // no trigger in roll mode
     if (m.trig.source < 2) {
       const src = m.ch[m.trig.source];
       out.push({ id: 'trigLevel', axis: 'y', side: 'r', color: COLORS.trig, label: 'T', y: this.yOfDiv(g, src.posDiv + m.trig.levelDiv) });

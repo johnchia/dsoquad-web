@@ -77,3 +77,27 @@ test('analog sine through the simulator shows up in the FFT', { timeout: 20000 }
     await dev.close();
   }
 });
+
+test('roll mode streams contiguous chunks at the sample rate', { timeout: 20000 }, async () => {
+  const dev = new Device(new SimTransport());
+  await dev.open();
+  try {
+    await dev.setRate(2000);
+    const chunks = [];
+    dev.addEventListener('roll', (e) => chunks.push(e.detail));
+    await dev.setAcq(P.ACQ_ROLL);
+    await new Promise((r) => setTimeout(r, 1500));
+    await dev.setAcq(P.ACQ_STOP);
+    assert.ok(chunks.length >= 10, `${chunks.length} chunks`);
+    let next = chunks[0].frameNo;
+    for (const c of chunks) {
+      assert.ok(c.roll && !c.triggered, 'flags');
+      assert.equal(c.frameNo, next, 'contiguous');
+      next += c.count;
+    }
+    const total = next - chunks[0].frameNo;
+    assert.ok(total > 2000 && total < 3300, `${total} samples in ~1.5 s at 2 kS/s`);
+  } finally {
+    await dev.close();
+  }
+});
