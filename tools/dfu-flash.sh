@@ -35,12 +35,18 @@ fi
 "$here/bin/dfuload" "$dev" cp "$hex"
 
 echo "Waiting for the DSO to program the image..."
+seen_gone=0
 for _ in $(seq 1 60); do
   sleep 1
-  dev="$(find_dev)" || continue
+  dev="$(find_dev)" || { seen_gone=1; continue; }
   listing="$(mdir -i "$dev" -b :: 2>/dev/null || true)"
   if grep -qi '\.RDY$' <<<"$listing"; then echo "Programmed OK (.RDY). Power-cycle the DSO."; exit 0; fi
   if grep -qi '\.NOT$' <<<"$listing"; then echo "DSO rejected the image (.NOT)." >&2; exit 2; fi
 done
+if [ "$seen_gone" = 1 ]; then
+  echo "Image written; the DSO re-enumerated to report the result but didn't come back"
+  echo "(usual with VM USB passthrough). Power-cycle it and check that the new firmware runs."
+  exit 0
+fi
 echo "No .RDY/.NOT seen after 60 s; check the DSO screen." >&2
 exit 3

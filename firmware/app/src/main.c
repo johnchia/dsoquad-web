@@ -17,7 +17,7 @@
 #include "sys.h"
 #include "escape.h"
 
-#define FW_VERSION "0.1.0-m1"
+#define FW_VERSION "0.1.1-m1"
 #define ESCAPE_HOLD_MS 2000
 #define BOOT_OK_MS     5000
 
@@ -119,14 +119,18 @@ static void cdc_printf(const char *fmt, ...)
   if (n > 0) cdc_write_all(buf, (uint32_t)n);
 }
 
+static const char *version_str(const char *p)
+{
+  // SYS returns pointers into flash (or RAM); anything else means "not provided".
+  uint32_t a = (uint32_t)p;
+  if ((a >= 0x08000000u && a < 0x08040000u) || (a >= 0x20000000u && a < 0x2000C000u)) return p;
+  return "n/a";
+}
+
 static const char *sys_str(uint8_t kind)
 {
   uint32_t p = __Get(kind);
-  // Version kinds return a pointer to a string in SYS/DFU flash.
-  if (p >= 0x08000000u && p < FPGA_BASE) return (const char *)p;
-  static char num[12];
-  snprintf(num, sizeof num, "%lu", (unsigned long)p);
-  return num;
+  return p ? version_str((const char *)p) : "n/a";
 }
 
 // ---------------------------------------------------------------- commands
@@ -158,11 +162,12 @@ static void handle_line(char *line)
     cdc_printf("pong\r\n");
   } else if (!strcmp(line, "info")) {
     cdc_printf("fw %s\r\nhw %s\r\nsys %s\r\ndfu %s\r\nfpga %s\r\nfpga_ok %lu\r\n",
-               FW_VERSION, sys_str(SYS_HDWVER), sys_str(SYS_SYSVER), sys_str(SYS_DFUVER),
+               FW_VERSION, version_str(__Chk_HDW()), sys_str(SYS_SYSVER), version_str(__Chk_DFU()),
                sys_str(SYS_FPGAVER), (unsigned long)__Get(SYS_FPGA_OK));
-    cdc_printf("serial %08lX\r\nsysclk %lu\r\nbattery_mv %lu\r\nusb_power %lu\r\n",
+    cdc_printf("serial %08lX\r\nsysclk %lu\r\nbattery_mv %lu\r\ncharging %lu\r\nusb_power %lu\r\n",
                (unsigned long)__GetDev_SN(), (unsigned long)sysclk_hz,
-               (unsigned long)__Get(SYS_V_BATTERY), (unsigned long)__Get(SYS_USB_POWER));
+               (unsigned long)__Get(SYS_V_BATTERY), (unsigned long)__Get(SYS_CHARGE),
+               (unsigned long)__Get(SYS_USB_POWER));
     cdc_printf("uptime_ms %lu\r\nstray_irq %lu\r\nwdg_resets %lu\r\n", (unsigned long)ms,
                (unsigned long)(stray_irq ? stray_irq - 1 : 0xFFFFFFFFu),
                (unsigned long)escape_watchdog_resets());
@@ -270,21 +275,21 @@ static void check_escape_keys(void)
 int main(void)
 {
   escape_watchdog_start();
+  __Set(SYS_BEEP_VOLUME, 0);  // SYS leaves the boot beep on for the APP to stop
 
   sysclk_hz = read_sysclk();
   SysTick_Config(sysclk_hz / 1000);
 
   __Clear_Screen(C_BLK);
   status_line(0, C_CYN, " DSO Quad Web Control  v" FW_VERSION);
-  status_line(1, C_WHT, " HW %s  SYS %s  FPGA %s", sys_str(SYS_HDWVER), sys_str(SYS_SYSVER),
-              sys_str(SYS_FPGAVER));
+  status_line(1, C_WHT, " HW %s  DFU %s", version_str(__Chk_HDW()), version_str(__Chk_DFU()));
   status_line(2, C_WHT, " Clock %s", usb_clock_setup());
   status_line(10, C_GRY, " Exit to scope: hold [] + () for 2 s");
   status_line(11, C_GRY, " (or power on holding () for the fallback)");
 
   usb_takeover();
 
-  uint32_t last_status = 0;
+  uint32_t last_status = 0, last_battery = 0;
   int boot_ok = 0;
   for (;;) {
     escape_watchdog_kick();
@@ -294,5 +299,6 @@ int main(void)
 
     if (!boot_ok && ms > BOOT_OK_MS) { escape_boot_ok(); boot_ok = 1; }
     if (ms - last_status > 250) { last_status = ms; status_update(); }
+    if (ms - last_battery > 1000) { last_battery = ms; __Set(SYS_BATTERY_DT, 1); }
   }
 }

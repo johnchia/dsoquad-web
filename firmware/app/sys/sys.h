@@ -10,6 +10,7 @@
 // __Set objects
 #define SYS_BACKLIGHT    2   // 0..100
 #define SYS_BEEP_VOLUME  3   // 0..100
+#define SYS_BATTERY_DT   4   // 1 = start a battery measurement (app does this once a second)
 #define SYS_KEY_IF_RST   19  // clear the TIM3 (key scan tick) interrupt flag
 
 // __Get kinds
@@ -47,3 +48,5 @@ void     __Display_Str(uint16_t x0, uint16_t y0, uint16_t color, uint8_t mode, c
 void     __Set(uint8_t object, uint32_t value);
 uint32_t __Get(uint8_t kind);
 uint32_t __GetDev_SN(void);
+const char *__Chk_HDW(void);  // hardware version string
+const char *__Chk_DFU(void);  // DFU version string
