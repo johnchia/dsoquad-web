@@ -2,9 +2,13 @@
 
 Static page: plain ES modules, no build step, no dependencies.
 
+Hosted at **https://johnchia.github.io/dsoquad-web/** (deployed from `master` by
+`.github/workflows/pages.yml` after the tests pass). For local development:
+
     python3 -m http.server -d web 8000     # then open http://localhost:8000 in Chrome/Edge
 
-Web Serial needs a secure context: `http://localhost` works, but any other plain-http host doesn't.
+Web Serial needs a secure context: https or `http://localhost` work, plain http elsewhere and
+`file://` don't (the page uses ES modules, which Chrome won't load from `file://`).
 The browser must run on the machine the DSO is plugged into.
 
 | URL | Source |
