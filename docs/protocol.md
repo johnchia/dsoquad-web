@@ -12,7 +12,7 @@ Each message is `COBS(type, seq, body..., crc_lo, crc_hi)` followed by a `0x00` 
 - `crc`: CRC-16/CCITT-FALSE (poly `0x1021`, init `0xFFFF`, no reflection, no xor-out) over
   `type, seq, body`, little-endian.
 - All integers are little-endian. Structures are packed (no padding).
-- Host messages are at most 64 bytes before encoding.
+- Host messages are at most 1100 bytes before encoding (only `STORE_WRITE` comes close).
 
 A receiver that sees a bad CRC or length drops the message. The device replies to it with
 `ACK` status `BAD_FRAME` (seq 0) if it could decode anything at all.
@@ -43,6 +43,8 @@ The firmware deals only in raw hardware values; calibration and physical units l
 | `0x14` | SET_GEN | `mode u8` (0 off, 1 square), `freq_hz u32`, `duty u8` (%) | `ACK` |
 | `0x15` | SET_SYSTEM | `backlight u8` (0–100), `beep u8` (0–100); 255 = unchanged | `ACK` |
 | `0x20` | GET_TABLES | – | 4 × `TABLE`, then `ACK` |
+| `0x21` | STORE_READ | – | `STORE_DATA` |
+| `0x22` | STORE_WRITE | data, 0–1024 bytes (0 erases) | `ACK` (`FLASH_ERROR` if programming or verification failed) |
 | `0x30` | REG_SET | `object u8`, `value u32` (`__Set`) | `ACK` |
 | `0x31` | REG_GET | `kind u8` (`__Get`) | `REG_VALUE` |
 | `0x32` | PARAM_SET | `addr u8`, `value u8` (`__Set_Param`, FPGA trigger block) | `ACK` |
@@ -64,8 +66,9 @@ sends one triggered frame, then switches to stop.
 | `0x83` | STATE | see below |
 | `0x84` | FRAME | see below |
 | `0x85` | TABLE | `id u8`, `elem_size u8`, `count u8`, `count × elem_size` raw bytes |
+| `0x86` | STORE_DATA | `len u16` (0 = nothing stored), `len` bytes |
 | `0x8E` | LOG | text (not NUL-terminated) |
-| `0xA0` | ACK | `status u8` (0 OK, 1 BAD_LENGTH, 2 BAD_VALUE, 3 UNKNOWN_TYPE, 4 BAD_FRAME, 5 BUSY) |
+| `0xA0` | ACK | `status u8` (0 OK, 1 BAD_LENGTH, 2 BAD_VALUE, 3 UNKNOWN_TYPE, 4 BAD_FRAME, 5 BUSY, 6 FLASH_ERROR) |
 | `0xB1` | REG_VALUE | `kind u8`, `value u32` |
 
 ### STATE (46 bytes)
@@ -110,3 +113,17 @@ hosts should ignore samples 0–3.
 | 1 | `Y_attr[Yp_Max+1]` (ranges) | 20 | `STR char[8]`, `KA1 s16`, `KA2 u16`, `KB1 s16`, `KB2 u16`, `SCALE u32` |
 | 2 | `X_attr[Xp_Max+6]` (timebases) | 20 | `STR char[8]`, `PSC s16`, `ARR u16`, `CCR u16`, `KP u16`, `SCALE u32` |
 | 3 | `T_attr[Tg_Num+1]` (triggers) | 10 | `STR char[8]`, `CHx u8`, `CMD u8` |
+
+## Persistent store (firmware ≥ 0.4.0)
+
+One opaque blob of up to 1024 bytes in the internal flash page at `0x0802B800` (the last page
+before the FPGA image; no APP image may reach it). The firmware keeps it with a magic word and
+a CRC and returns it unchanged; a write erases the page (~20–40 ms, the device stalls) and
+verifies. The host owns the format:
+
+- A sequence of records `tag u8`, `len u16`, `len` bytes. Unknown tags must be kept when
+  rewriting, so different hosts/versions can share the store.
+- Tag `1`: vertical calibration v1. `created u32` (Unix seconds), then for channel A ranges 0–7
+  and channel B ranges 0–7: `a f32`, `b f32`, `gain f32`, `flags u8` (bit 0 zero calibrated,
+  bit 1 gain calibrated). 0 V reads as code `a + b × offset_register`; a division is
+  `25 × gain` codes.

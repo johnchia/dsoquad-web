@@ -4,13 +4,14 @@
 export const HELLO = 0x01, PING = 0x02, GET_STATE = 0x03;
 export const SET_CHANNEL = 0x10, SET_TIMEBASE = 0x11, SET_TRIGGER = 0x12, SET_ACQ = 0x13,
   SET_GEN = 0x14, SET_SYSTEM = 0x15;
-export const GET_TABLES = 0x20;
+export const GET_TABLES = 0x20, STORE_READ = 0x21, STORE_WRITE = 0x22;
 export const REG_SET = 0x30, REG_GET = 0x31, PARAM_SET = 0x32, REBOOT = 0x3F;
 // Device -> host
-export const INFO = 0x81, PONG = 0x82, STATE = 0x83, FRAME = 0x84, TABLE = 0x85, LOG = 0x8E,
+export const INFO = 0x81, PONG = 0x82, STATE = 0x83, FRAME = 0x84, TABLE = 0x85, STORE_DATA = 0x86, LOG = 0x8E,
   ACK = 0xA0, REG_VALUE = 0xB1;
 
-export const ACK_NAMES = ['OK', 'BAD_LENGTH', 'BAD_VALUE', 'UNKNOWN_TYPE', 'BAD_FRAME', 'BUSY'];
+export const ACK_NAMES = ['OK', 'BAD_LENGTH', 'BAD_VALUE', 'UNKNOWN_TYPE', 'BAD_FRAME', 'BUSY', 'FLASH_ERROR'];
+export const STORE_MAX = 1024;
 export const ACQ_STOP = 0, ACQ_NORMAL = 1, ACQ_AUTO = 2, ACQ_SINGLE = 3;
 export const TRIG_KINDS = ['falling', 'rising', 'low', 'high', 'low<w', 'low>w', 'high<w', 'high>w'];
 
@@ -236,4 +237,30 @@ export function actualRate(hz) {
   arr = Math.min(Math.max(arr, 1), 65535);
   const div = (psc + 1) * (arr + 1);
   return Math.floor((TIMER_HZ + Math.floor(div / 2)) / div);
+}
+
+// ------------------------------------------------------------------ persistent store records
+
+/** Store blob -> Map(tag -> Uint8Array). */
+export function parseStore(blob) {
+  const out = new Map();
+  for (let i = 0; i + 3 <= blob.length;) {
+    const n = blob[i + 1] | blob[i + 2] << 8;
+    out.set(blob[i], blob.slice(i + 3, i + 3 + n));
+    i += 3 + n;
+  }
+  return out;
+}
+
+/** Map(tag -> Uint8Array) -> store blob. */
+export function buildStore(records) {
+  const n = [...records.values()].reduce((k, r) => k + 3 + r.length, 0);
+  const out = new Uint8Array(n);
+  let i = 0;
+  for (const [tag, r] of records) {
+    out[i] = tag; out[i + 1] = r.length & 0xFF; out[i + 2] = r.length >> 8;
+    out.set(r, i + 3);
+    i += 3 + r.length;
+  }
+  return out;
 }

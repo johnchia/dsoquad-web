@@ -101,7 +101,9 @@
           <dt>Serial</dt><dd id="dev-serial">–</dd>
           <dt>Battery</dt><dd id="dev-battery">–</dd>
           <dt>Uptime</dt><dd id="dev-uptime">–</dd>
+          <dt>Calibration</dt><dd id="dev-cal">–</dd>
         </dl>
+        <div class="row buttons"><button id="calibrate" disabled>Calibrate…</button></div>
         <div class="row"><label for="backlight">Backlight</label><input type="range" id="backlight" min="0" max="100" step="5"><output id="backlight-out"></output></div>
         <div class="row buttons">
           <button id="export">Export settings</button>
@@ -112,6 +114,43 @@
       </fieldset>
     </aside>
   </main>
+
+  <dialog id="cal-dialog">
+    <form method="dialog">
+      <h2>Vertical calibration</h2>
+      <p class="muted">Stored on the DSO itself, so it follows the device to any computer. Nothing is
+        written until you press <b>Save to device</b>.</p>
+
+      <section>
+        <h3>1 · Zero</h3>
+        <p>Disconnect everything from <b>CH A</b> and <b>CH B</b>, then measure. It steps through all
+          8 ranges at 3 positions on both channels (about 10 s).</p>
+        <button type="button" id="cal-zero" class="primary">Measure zero</button>
+      </section>
+
+      <section>
+        <h3>2 · Gain <span class="muted">(optional, needs a known DC voltage)</span></h3>
+        <p>Connect a DC voltage you know to one channel. The wave out works: connect it to the
+          channel, press <b>Wave out high</b> and measure it with a multimeter. Each run
+          calibrates the ranges where the voltage shows as 1.5–7.6 divisions, so use several
+          voltages to cover every range.</p>
+        <div class="row"><label>Channel</label><span class="seg" data-for="cal-ch"><button type="button" value="0" class="active">A</button><button type="button" value="1">B</button></span>
+          <button type="button" id="cal-wave-high">Wave out high</button></div>
+        <div class="row"><label for="cal-volts">Voltage</label><input type="number" id="cal-volts" step="any" placeholder="e.g. 3.28"><span class="unit">V</span>
+          <button type="button" id="cal-gain">Measure gain</button></div>
+      </section>
+
+      <div class="cal-progress"><progress id="cal-progress" max="1" value="0"></progress><span id="cal-msg"></span></div>
+      <div class="table-wrap"><table id="cal-table"></table></div>
+
+      <footer>
+        <button type="button" id="cal-reset">Reset to uncalibrated</button>
+        <span class="spacer"></span>
+        <button type="button" id="cal-cancel">Discard</button>
+        <button type="button" id="cal-save" class="primary">Save to device</button>
+      </footer>
+    </form>
+  </dialog>
 
   <div id="toast" role="status" aria-live="polite"></div>
   <script type="module" src="js/app.js"></script>

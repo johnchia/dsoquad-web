@@ -177,6 +177,22 @@ async def cmd_reg(dev, a):
         await dev.param_set(a.id, a.value)
 
 
+async def cmd_cal(dev, a):
+    """Show the calibration stored on the device (written by the web UI)."""
+    from protocol import parse_calibration, parse_store
+    recs = parse_store(await dev.store_read())
+    if 1 not in recs:
+        print('no calibration stored on the device')
+        return
+    c = parse_calibration(recs[1])
+    print('calibrated', time.strftime('%Y-%m-%d %H:%M', time.localtime(c['created'])))
+    t = (await dev.tables())[1]
+    for i, name in enumerate('AB'):
+        for r, e in enumerate(c['ch'][i]):
+            print(f"  {name} {t[r]['str']:6s} zero = {e['a']:7.2f} + {e['b']:.4f} x offset   gain {e['gain']:.4f}"
+                  f"   {'Z' if e['zero_cal'] else '-'}{'G' if e['gain_cal'] else '-'}")
+
+
 async def cmd_reboot(dev, a):
     await dev.reboot(a.fallback)
 
@@ -224,6 +240,7 @@ def main():
     r.add_argument('op', choices=('get', 'set', 'param'))
     r.add_argument('id', type=int)
     r.add_argument('value', type=int, nargs='?', default=0)
+    sub.add_parser('cal')
     rb = sub.add_parser('reboot')
     rb.add_argument('--fallback', action='store_true')
     a = ap.parse_args()

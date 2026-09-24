@@ -4,6 +4,8 @@ import * as P from './protocol.js';
 import { Device, DeviceError } from './device.js';
 import { PlaybackTransport, SerialTransport, SimTransport } from './transport.js';
 import { COLORS, HDIV, ScopeView, fmtSI } from './view.js';
+import * as Cal from './calibration.js';
+import { openCalDialog } from './cal-ui.js';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -30,6 +32,10 @@ const DEFAULTS = {
 // ------------------------------------------------------------------ state
 
 let settings = loadSettings();
+let cal = Cal.nominal();   // vertical calibration, read from the device's flash store
+let calSupported = false;  // firmware >= 0.4 has the store
+let calibrating = false;   // the calibration dialog drives the device; the app keeps off
+const live = () => (calibrating ? null : dev);
 let ranges = FALLBACK_RANGES.slice();
 let dev = null;            // connected Device
 let persist = true;        // false during playback: its settings aren't the user's
@@ -61,14 +67,22 @@ function saveSettings() {
 // ------------------------------------------------------------------ derived values
 
 const sampleRate = () => Math.min(P.MAX_RATE, SAMPLES_PER_DIV / settings.tdiv);
-const offsetCode = (ch) => Math.round(clamp(P.ADC_ZERO + settings.ch[ch].posDiv * P.CODES_PER_DIV, 0, 255));
+/** Offset register that puts the channel's 0 V at its position marker. */
+const offsetCode = (ch) => Cal.offsetFor(cal, ch, settings.ch[ch].range, P.ADC_ZERO + settings.ch[ch].posDiv * P.CODES_PER_DIV);
+
+/** Code of 0 V and codes per division for a channel as captured in a frame. */
+function frameScale(ch, fc) {
+  return { zero: Cal.zeroCode(cal, ch, fc.range, fc.offset), cpd: Cal.codesPerDiv(cal, ch, fc.range) };
+}
 const autoMs = () => Math.round(clamp(20 * settings.tdiv * 1000, 100, 60000));
 const isPulse = (kind) => kind >= 4;
 
 function trigLevelCode() {
   const t = settings.trig;
   if (t.source > 1) return 128;
-  return Math.round(clamp(offsetCode(t.source) + t.levelDiv * P.CODES_PER_DIV, 0, 255));
+  const c = settings.ch[t.source];
+  const zero = Cal.zeroCode(cal, t.source, c.range, offsetCode(t.source));
+  return Math.round(clamp(zero + t.levelDiv * Cal.codesPerDiv(cal, t.source, c.range), 0, 255));
 }
 
 function trigWidthSamples() {
@@ -90,21 +104,21 @@ function report(e) {
 const send = {
   channel(i) {
     const c = settings.ch[i];
-    dev?.setChannel(i, c.range, c.coupling, offsetCode(i)).catch(report);
+    live()?.setChannel(i, c.range, c.coupling, offsetCode(i)).catch(report);
     if (settings.trig.source === i) send.trigger();  // level follows the channel's zero
   },
   rate() {
-    dev?.setRate(sampleRate()).catch(report);
+    live()?.setRate(sampleRate()).catch(report);
     send.trigger();   // pulse width is in samples
     send.acq();       // auto timeout scales with the timebase
   },
   trigger() {
     const t = settings.trig;
-    dev?.setTrigger(t.source, t.kind, trigLevelCode(), trigWidthSamples()).catch(report);
+    live()?.setTrigger(t.source, t.kind, trigLevelCode(), trigWidthSamples()).catch(report);
   },
-  acq() { if (!singleArmed) dev?.setAcq(acqMode(), autoMs()).catch(report); },
-  gen() { const g = settings.gen; dev?.setGen(g.mode, g.freq, g.duty).catch(report); },
-  system() { dev?.setSystem(settings.backlight, 255).catch(report); },
+  acq() { if (!singleArmed) live()?.setAcq(acqMode(), autoMs()).catch(report); },
+  gen() { const g = settings.gen; live()?.setGen(g.mode, g.freq, g.duty).catch(report); },
+  system() { live()?.setSystem(settings.backlight, 255).catch(report); },
   all() { send.channel(0); send.channel(1); send.rate(); send.gen(); send.system(); },
 };
 
@@ -137,6 +151,14 @@ async function connect(transport) {
     const t = await d.tables();
     if (t[1]?.length) ranges = t[1].map((r) => r.voltsPerDiv);
     fillRangeSelects();
+    try {
+      cal = await Cal.loadFrom(d);
+      calSupported = true;
+    } catch (e) {
+      cal = Cal.nominal();
+      calSupported = false;
+      console.warn('no calibration store:', e.message);
+    }
     if (!persist) adoptState(await d.state());
     singleArmed = false;
     send.all();
@@ -163,6 +185,7 @@ async function disconnect(byUser = true) {
   }
   persist = true;
   settings = loadSettings();
+  cal = Cal.nominal();
   status('Disconnected');
   syncControls();
 }
@@ -170,6 +193,8 @@ async function disconnect(byUser = true) {
 function onLost(reason) {
   clearInterval(pollTimer);
   dev = null;
+  calibrating = false;
+  document.getElementById('cal-dialog').close();
   status('Device lost, will reconnect when it reappears', 'err');
   console.warn('disconnected:', reason);
   syncControls();
@@ -198,7 +223,7 @@ async function pollState() {
       $('dev-battery').textContent = 'needs firmware ≥ 0.3';
     }
     // Self-heal: the device stops on its own if it thinks the host went away.
-    if (settings.running && !singleArmed && st.acqMode === P.ACQ_STOP) send.acq();
+    if (!calibrating && settings.running && !singleArmed && st.acqMode === P.ACQ_STOP) send.acq();
   } catch (e) { report(e); }
 }
 
@@ -225,10 +250,12 @@ function scheduleMeasure() {
   setTimeout(() => { measurePending = false; lastMeasure = performance.now(); updateReadouts(); }, Math.max(0, 250 - (performance.now() - lastMeasure)));
 }
 
-function measure(codes, offset, vdiv, rate) {
+/** Measurements in volts; `zero` is the code of 0 V and `cpd` the codes per division. */
+function measure(codes, zero, cpd, vdiv, rate) {
+  const offset = zero;
   let lo = 255, hi = 0, sum = 0, sq = 0;
   for (const c of codes) { if (c < lo) lo = c; if (c > hi) hi = c; sum += c; sq += c * c; }
-  const n = codes.length, k = vdiv / P.CODES_PER_DIV;
+  const n = codes.length, k = vdiv / cpd;
   const mean = sum / n;
   // Frequency from mid-level crossings with hysteresis (8-bit noise is a few codes).
   let freq = NaN;
@@ -272,7 +299,8 @@ function updateReadouts() {
   if (!f) return;
   [['A', f.a, 0], ['B', f.b, 1]].forEach(([name, codes, i]) => {
     if (!settings.ch[i].on) return;
-    const m = measure(codes.subarray(P.STALE_SAMPLES), f.ch[i].offset, ranges[f.ch[i].range] ?? 1, f.rate);
+    const { zero, cpd } = frameScale(i, f.ch[i]);
+    const m = measure(codes.subarray(P.STALE_SAMPLES), zero, cpd, ranges[f.ch[i].range] ?? 1, f.rate);
     const div = document.createElement('div');
     div.className = `ch ch-${name.toLowerCase()}`;
     const parts = [
@@ -295,6 +323,7 @@ const view = new ScopeView($('scope'), () => ({
   trig: { source: settings.trig.source, levelDiv: settings.trig.levelDiv, posDiv: settings.trigPosDiv },
   tdiv: settings.tdiv,
   vdivs: settings.ch.map((c) => ranges[c.range] ?? 1),
+  scale: frameScale,
 }), (id, value) => {
   if (id === 'pos0' || id === 'pos1') {
     const i = +id[3];
@@ -373,8 +402,14 @@ function syncControls() {
   $('connect').classList.toggle('primary', !dev);
   $('source').disabled = !!dev;
   if (!dev) {
-    ['dev-fw', 'dev-serial', 'dev-battery', 'dev-uptime'].forEach((id) => { $(id).textContent = '–'; });
+    ['dev-fw', 'dev-serial', 'dev-battery', 'dev-uptime', 'dev-cal'].forEach((id) => { $(id).textContent = '–'; });
+  } else {
+    const st = Cal.status(cal);
+    $('dev-cal').textContent = !calSupported ? 'needs firmware ≥ 0.4'
+      : { none: 'none', zero: 'zero only', partial: 'zero, some gains', full: 'zero and gain' }[st]
+        + (cal.created ? ` (${cal.created.slice(0, 10)})` : '');
   }
+  $('calibrate').disabled = !dev || !calSupported;
   updateReadouts();
 }
 
@@ -414,6 +449,16 @@ function bind() {
     try { await connect(new PlaybackTransport(new Uint8Array(await file.arrayBuffer()), file.name)); } catch (err) { toast(err.message); }
   };
 
+  $('calibrate').onclick = () => openCalDialog({
+    dev, ranges, cal,
+    suspend(on) {
+      calibrating = on;
+      if (!on && dev) send.all();   // put the user's settings back
+    },
+    onSaved(c) { cal = c; syncControls(); view.invalidate(); },
+    toast,
+  });
+
   $('export').onclick = () => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(settings, null, 2)], { type: 'application/json' }));
@@ -431,7 +476,7 @@ function bind() {
   $('reset').onclick = () => applySettings(merge(DEFAULTS, null));
 
   document.addEventListener('keydown', (e) => {
-    if (e.target.closest('input, select, textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (calibrating || e.target.closest('input, select, textarea, dialog') || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === ' ') { e.preventDefault(); toggleRun(); }
     if (e.key === 's' || e.key === 'S') single();
   });

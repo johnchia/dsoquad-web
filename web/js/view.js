@@ -1,13 +1,14 @@
 // Waveform canvas: graticule, traces, draggable markers (channel zeros, trigger level and
 // position) and a hover readout. Knows divisions, not devices: the app supplies a model.
-import { ADC_ZERO, CODES_PER_DIV, STALE_SAMPLES } from './protocol.js';
+import { STALE_SAMPLES } from './protocol.js';
 
 export const HDIV = 10, VDIV = 8;
 export const COLORS = { a: '#f5d90a', b: '#3fd4f4', c: '#e070f0', d: '#5fe07a', trig: '#ff8c42', grid: '#2c3440', axis: '#4a5563' };
 const M = { l: 30, r: 30, t: 20, b: 8 };   // margins hold the markers
 
 export class ScopeView {
-  /** model() must return {frame, ch:[{on, posDiv}], digital, trig:{source, levelDiv, posDiv}, tdiv, vdivs:[V/div A, B]} */
+  /** model() must return {frame, ch:[{on, posDiv}], digital, trig:{source, levelDiv, posDiv}, tdiv,
+   * vdivs:[V/div A, B], scale(ch, frameChannel) -> {zero: code of 0 V, cpd: codes per div}} */
   constructor(canvas, model, onDrag) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
@@ -109,9 +110,11 @@ export class ScopeView {
 
   _trace(ctx, g, m, ch) {
     const f = m.frame, codes = ch ? f.b : f.a;
-    // Follow the channel position immediately, even on a frame captured at the old offset.
-    const shift = ADC_ZERO + m.ch[ch].posDiv * CODES_PER_DIV - f.ch[ch].offset;
-    const yOf = (code) => g.y0 + g.ph - (code + shift - ADC_ZERO) / CODES_PER_DIV * g.dy;
+    // Calibrated: 0 V sits at the channel's current position (so a frame captured at an
+    // old offset follows the marker at once) and a division is exactly one V/div.
+    const { zero, cpd } = m.scale(ch, f.ch[ch]);
+    const base = m.ch[ch].posDiv;
+    const yOf = (code) => g.y0 + g.ph - (base + (code - zero) / cpd) * g.dy;
     const pxPerSample = g.dx / (f.rate * m.tdiv);
     const i0 = Math.max(STALE_SAMPLES, Math.floor(f.pretrigger - m.trig.posDiv * m.tdiv * f.rate) - 1);
     const i1 = Math.min(f.count - 1, Math.ceil(f.pretrigger + (HDIV - m.trig.posDiv) * m.tdiv * f.rate) + 1);

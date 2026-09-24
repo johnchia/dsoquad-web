@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define PROTO_MAX_RX 64  // largest decoded host message (type + seq + body + crc)
+#define PROTO_MAX_RX 1100  // largest decoded host message (type + seq + body + crc); STORE_WRITE is the big one
 
 uint16_t crc16_update(uint16_t crc, const uint8_t *p, size_t n);
 

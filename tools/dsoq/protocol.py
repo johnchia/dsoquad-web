@@ -6,12 +6,12 @@ from dataclasses import dataclass
 # Host -> device
 HELLO, PING, GET_STATE = 0x01, 0x02, 0x03
 SET_CHANNEL, SET_TIMEBASE, SET_TRIGGER, SET_ACQ, SET_GEN, SET_SYSTEM = 0x10, 0x11, 0x12, 0x13, 0x14, 0x15
-GET_TABLES = 0x20
+GET_TABLES, STORE_READ, STORE_WRITE = 0x20, 0x21, 0x22
 REG_SET, REG_GET, PARAM_SET, REBOOT = 0x30, 0x31, 0x32, 0x3F
 # Device -> host
-INFO, PONG, STATE, FRAME, TABLE, LOG, ACK, REG_VALUE = 0x81, 0x82, 0x83, 0x84, 0x85, 0x8E, 0xA0, 0xB1
+INFO, PONG, STATE, FRAME, TABLE, STORE_DATA, LOG, ACK, REG_VALUE = 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x8E, 0xA0, 0xB1
 
-ACK_NAMES = ['OK', 'BAD_LENGTH', 'BAD_VALUE', 'UNKNOWN_TYPE', 'BAD_FRAME', 'BUSY']
+ACK_NAMES = ['OK', 'BAD_LENGTH', 'BAD_VALUE', 'UNKNOWN_TYPE', 'BAD_FRAME', 'BUSY', 'FLASH_ERROR']
 ACQ_STOP, ACQ_NORMAL, ACQ_AUTO, ACQ_SINGLE = range(4)
 TRIG_KINDS = ['falling', 'rising', 'low', 'high', 'low<w', 'low>w', 'high<w', 'high>w']
 
@@ -155,3 +155,22 @@ def parse_table(body: bytes):
 
 def _s(b: bytes) -> str:
     return b.split(b'\x00')[0].decode('latin1').strip()
+
+
+def parse_store(blob: bytes) -> dict:
+    """Store records (docs/protocol.md): {tag: bytes}."""
+    out, i = {}, 0
+    while i + 3 <= len(blob):
+        tag, n = blob[i], struct.unpack_from('<H', blob, i + 1)[0]
+        out[tag] = blob[i + 3:i + 3 + n]
+        i += 3 + n
+    return out
+
+
+def parse_calibration(rec: bytes) -> dict:
+    created, = struct.unpack_from('<I', rec)
+    ch = [[], []]
+    for k in range(16):
+        a, b, gain, flags = struct.unpack_from('<fffB', rec, 4 + 13 * k)
+        ch[k // 8].append({'a': a, 'b': b, 'gain': gain, 'zero_cal': bool(flags & 1), 'gain_cal': bool(flags & 2)})
+    return {'created': created, 'ch': ch}

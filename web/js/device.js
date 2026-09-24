@@ -139,6 +139,15 @@ export class Device extends EventTarget {
     return out;
   }
 
+  async storeRead() {
+    const [m] = await this.request(P.STORE_READ);
+    if (m.type !== P.STORE_DATA) throw new DeviceError('bad STORE_READ reply');
+    const n = m.body[0] | m.body[1] << 8;
+    return m.body.slice(2, 2 + n);
+  }
+
+  async storeWrite(blob) { await this.command(P.STORE_WRITE, blob); }
+
   setChannel(ch, range, coupling, offset) {
     return this.coalesce(`ch${ch}`, P.SET_CHANNEL, P.body.channel(ch, range, coupling, offset));
   }

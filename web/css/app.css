@@ -152,6 +152,33 @@ dl.info dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-n
 
 fieldset:disabled { opacity: 0.55; }
 
+dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 18px 20px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+dialog h2 { margin: 0 0 4px; font-size: 16px; }
+dialog h3 { margin: 14px 0 4px; font-size: 14px; }
+dialog p { margin: 4px 0 8px; }
+dialog section { border-top: 1px solid var(--border); margin-top: 10px; }
+.muted { color: var(--muted); font-weight: normal; }
+.cal-progress { display: flex; align-items: center; gap: 10px; margin: 14px 0 8px; min-height: 20px; }
+.cal-progress progress { width: 180px; }
+.table-wrap { overflow-x: auto; }
+#cal-table { border-collapse: collapse; width: 100%; font: 12px/1.6 ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+#cal-table th, #cal-table td { padding: 1px 8px; text-align: right; border-bottom: 1px solid var(--border); }
+#cal-table th { color: var(--muted); font-weight: normal; }
+#cal-table td.new { color: var(--ok); }
+#cal-table td.none { color: var(--muted); }
+#cal-table td.bad { color: var(--err); }
+dialog footer { display: flex; gap: 8px; margin-top: 14px; }
+dialog footer .spacer { flex: 1; }
+
 #toast {
   position: fixed;
   left: 50%;

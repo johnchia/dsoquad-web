@@ -130,6 +130,17 @@ class VirtualTransport {
         break;
       case P.SET_ACQ: s.acqMode = b[0]; s.autoMs = v.getUint16(1, true) || 100; this.armedAt = performance.now(); this.ack(seq); break;
       case P.SET_GEN: Object.assign(s, { genMode: b[0], genFreq: v.getUint32(1, true), genDuty: b[5] }); this.ack(seq); break;
+      case P.STORE_READ: {
+        const d = this.store(), out = new Uint8Array(2 + d.length);
+        out[0] = d.length & 0xFF; out[1] = d.length >> 8; out.set(d, 2);
+        this.send(P.STORE_DATA, seq, out);
+        break;
+      }
+      case P.STORE_WRITE:
+        if (b.length > P.STORE_MAX) { this.ack(seq, 1); break; }
+        this.store(b);
+        this.ack(seq);
+        break;
       case P.SET_SYSTEM:
         if (b[0] <= 100) s.backlight = b[0];
         if (b[1] <= 100) s.beep = b[1];
@@ -137,6 +148,18 @@ class VirtualTransport {
         break;
       default: this.ack(seq, 3);
     }
+  }
+
+  /** The device's flash store; the simulator keeps it in localStorage so it survives reloads. */
+  store(write) {
+    const key = `dsoq.sim.store.${this.fwName}`;
+    if (write) this._store = write.slice();
+    try {
+      if (write) localStorage.setItem(key, btoa(String.fromCharCode(...write)));
+      const v = localStorage.getItem(key);
+      if (v != null) return Uint8Array.from(atob(v), (c) => c.charCodeAt(0));
+    } catch { /* no localStorage (node, private mode): memory only */ }
+    return this._store ?? new Uint8Array(0);
   }
 
   infoBody() {
@@ -216,13 +239,15 @@ export class SimTransport extends VirtualTransport {
     super();
     this.label = 'Simulator';
     this.fwName = 'simulator';
-    this.phase = 0;
+    this.simulated = true;
+    this.inputsOpen = false;   // true: nothing connected to CH A/B (0 V), as for zero calibration
   }
 
   tableBodies() { return simTables(); }
 
   voltsA(t) {
     const s = this.state;
+    if (this.inputsOpen) return 0;
     if (s.genMode) {
       const p = (t * s.genFreq) % 1;
       return p < s.genDuty / 100 ? 3.0 : 0.0;
@@ -230,14 +255,20 @@ export class SimTransport extends VirtualTransport {
     return 1.2 * Math.sin(2 * Math.PI * 1000 * t);
   }
 
-  voltsB(t) { return 1.5 * Math.sin(2 * Math.PI * 2700 * t) + 0.3 * Math.sin(2 * Math.PI * 8100 * t); }
+  voltsB(t) {
+    if (this.inputsOpen) return 0;
+    return 1.5 * Math.sin(2 * Math.PI * 2700 * t) + 0.3 * Math.sin(2 * Math.PI * 8100 * t);
+  }
 
   code(ch, volts) {
     const c = this.state.ch[ch];
     const vdiv = RANGE_V[c.range] ?? 1;
     const noise = (Math.random() - 0.5) * 1.6;
     const ac = c.coupling ? (ch === 0 && this.state.genMode ? -1.5 : 0) : 0;  // crude AC: remove the square's mean
-    return Math.min(255, Math.max(0, Math.round(c.offset + (volts + ac) / vdiv * P.CODES_PER_DIV + noise)));
+    // Front-end errors of the size the real unit has, so calibration has something to fix.
+    const zero = (ch ? 14 - c.range * 0.5 : 9 + c.range * 0.4) + (ch ? 0.985 : 1.012) * c.offset;
+    const gain = ch ? 1.03 - c.range * 0.004 : 0.975 + c.range * 0.003;
+    return Math.min(255, Math.max(0, Math.round(zero + (volts + ac) / vdiv * P.CODES_PER_DIV * gain + noise)));
   }
 
   nextFrame(now) {

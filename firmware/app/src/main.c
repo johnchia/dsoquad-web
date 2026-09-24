@@ -10,8 +10,9 @@
 #include "escape.h"
 #include "proto.h"
 #include "scope.h"
+#include "store.h"
 
-#define FW_VERSION "0.3.0-m3+" BUILD_ID
+#define FW_VERSION "0.4.0-m4+" BUILD_ID
 #define ESCAPE_HOLD_MS 2000
 #define BOOT_OK_MS     5000
 
@@ -91,12 +92,12 @@ void USBWakeUp_IRQHandler(void) { tud_int_handler(0); }
 enum {
   MSG_HELLO = 0x01, MSG_PING = 0x02, MSG_GET_STATE = 0x03,
   MSG_SET_CHANNEL = 0x10, MSG_SET_TIMEBASE = 0x11, MSG_SET_TRIGGER = 0x12, MSG_SET_ACQ = 0x13,
-  MSG_SET_GEN = 0x14, MSG_SET_SYSTEM = 0x15, MSG_GET_TABLES = 0x20,
+  MSG_SET_GEN = 0x14, MSG_SET_SYSTEM = 0x15, MSG_GET_TABLES = 0x20, MSG_STORE_READ = 0x21, MSG_STORE_WRITE = 0x22,
   MSG_REG_SET = 0x30, MSG_REG_GET = 0x31, MSG_PARAM_SET = 0x32, MSG_REBOOT = 0x3F,
-  MSG_INFO = 0x81, MSG_PONG = 0x82, MSG_STATE = 0x83, MSG_FRAME = 0x84, MSG_TABLE = 0x85,
+  MSG_INFO = 0x81, MSG_PONG = 0x82, MSG_STATE = 0x83, MSG_FRAME = 0x84, MSG_TABLE = 0x85, MSG_STORE_DATA = 0x86,
   MSG_LOG = 0x8E, MSG_ACK = 0xA0, MSG_REG_VALUE = 0xB1,
 };
-enum { ACK_OK, ACK_BAD_LENGTH, ACK_BAD_VALUE, ACK_UNKNOWN_TYPE, ACK_BAD_FRAME, ACK_BUSY };
+enum { ACK_OK, ACK_BAD_LENGTH, ACK_BAD_VALUE, ACK_UNKNOWN_TYPE, ACK_BAD_FRAME, ACK_BUSY, ACK_FLASH_ERROR };
 
 #define PROTO_VERSION 1
 
@@ -235,6 +236,20 @@ static void handle_msg(const uint8_t *m, size_t len)
   case MSG_SET_GEN: NEED(6); RESULT(scope_set_gen(b[0], get_u32(b + 1), b[5])); break;
   case MSG_SET_SYSTEM: NEED(2); scope_set_system(b[0], b[1]); send_ack(seq, ACK_OK); break;
   case MSG_GET_TABLES: NEED(0); send_tables(seq); send_ack(seq, ACK_OK); break;
+  case MSG_STORE_READ: {
+    NEED(0);
+    const uint8_t *d = NULL;
+    int sn = store_read(&d);
+    proto_tx_begin(&tx, cdc_sink, MSG_STORE_DATA, seq);
+    proto_tx_u16(&tx, (uint16_t)sn);
+    proto_tx_put(&tx, d, (size_t)sn);
+    msg_end();
+    break;
+  }
+  case MSG_STORE_WRITE:
+    if (n > STORE_MAX) { send_ack(seq, ACK_BAD_LENGTH); break; }
+    send_ack(seq, store_write(b, (uint16_t)n) == 0 ? ACK_OK : ACK_FLASH_ERROR);
+    break;
   case MSG_REG_SET: NEED(5); __Set(b[0], get_u32(b + 1)); send_ack(seq, ACK_OK); break;
   case MSG_REG_GET: {
     NEED(1);

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Print the address range of an Intel HEX file and refuse images that touch protected flash.
 
-Allowed APP area on the DSO Quad: 0x0800C000 up to (not including) the FPGA image at 0x0802C000.
-Everything below (DFU bootloader, SYS) and above (FPGA bitstream, logo) is off limits.
+Allowed APP area on the DSO Quad: 0x0800C000 up to (not including) the persistent store page at
+0x0802B800 (firmware/app/src/store.c), which sits just below the FPGA image at 0x0802C000.
+Everything below (DFU bootloader, SYS) and above (store, FPGA bitstream, logo) is off limits.
 """
 import sys
 
-APP_LO, APP_HI = 0x0800C000, 0x0802C000
+APP_LO, APP_HI = 0x0800C000, 0x0802B800
 
 def ranges(path):
     base, lo, hi = 0, None, 0

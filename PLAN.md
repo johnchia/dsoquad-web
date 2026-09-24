@@ -53,6 +53,7 @@ Three pieces are needed:
 | `0x14000–0x1BFFF` | 32 KB | APP2 slot |
 | `0x1C000–0x23FFF` | 32 KB | APP3 slot |
 | `0x24000–0x2BFFF` | 32 KB | "APP4" slot. Nominal only; see the FPGA row |
+| `0x2B800–0x2BFFF` | 2 KB | **Persistent store** (fw ≥ 0.4): calibration and other host data, one CRC-checked blob. No APP image may reach it (`tools/hexrange.py`) |
 | `0x2C000–0x3D7FF` | ~70 KB | **FPGA bitstream** (FPGA 2.61 is 68,088 bytes, loaded at `0x0802C000`). **Never overwrite** |
 | `0x3D800–0x3FFFF` | 10 KB | Logo |
 
@@ -222,6 +223,7 @@ Also worth investigating (not required): whether the DFU bootloader can be enter
 - The first 1–4 samples of every frame are stale FIFO contents (found in the recordings: they added a fake edge and a 1.4% frequency error). Hosts skip samples 0–3.
 
 ### M4: Scope features (1–2 weeks, incremental)
+- [x] **Calibration (2026-09-23):** host-side model per channel and range: 0 V reads `a + b × offset_register` (zero error + offset-DAC scale, fitted from 3 offsets with the inputs open) and one division is `25 × gain` codes (gain from a known DC voltage; the wave out held high at 100% duty works, measured with a multimeter). The results are stored **on the DSO** in the flash store page (owner's request), so they follow the device. The web page applies them to channel offsets, trigger level, trace scale and measurements. Tested end to end against the simulator, which has deliberate front-end errors. Measured before calibrating: 0 V read +11 codes (A) and +14 (B) off nominal at offset 104, i.e. the ~0.4–0.6 div error seen since M2.
 - [ ] Measurements: Vpp, Vrms, mean, freq, period, duty, rise/fall. Cursors (ΔT, ΔV).
 - [ ] FFT view (windowed), XY mode, persistence, math (A+B, A−B, A×B).
 - [ ] Roll/stream mode for slow timebases (≥ ~50 ms/div).

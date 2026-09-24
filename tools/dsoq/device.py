@@ -7,7 +7,7 @@ import serial_asyncio_fast
 
 from protocol import (ACK, ACK_NAMES, FRAME, GET_STATE, GET_TABLES, HELLO, INFO, LOG, PARAM_SET, PING,
                       PONG, REBOOT, REG_GET, REG_SET, REG_VALUE, SET_ACQ, SET_CHANNEL, SET_GEN,
-                      SET_SYSTEM, SET_TIMEBASE, SET_TRIGGER, STATE, TABLE, Frame, State, decode,
+                      SET_SYSTEM, SET_TIMEBASE, SET_TRIGGER, STATE, STORE_DATA, STORE_READ, STORE_WRITE, TABLE, Frame, State, decode,
                       encode, parse_table)
 
 
@@ -140,6 +140,15 @@ class Device:
 
     async def param_set(self, addr, value):
         await self.command(PARAM_SET, bytes([addr, value]))
+
+    async def store_read(self):
+        (mt, b), = await self.request(STORE_READ)
+        assert mt == STORE_DATA
+        n, = struct.unpack_from('<H', b)
+        return b[2:2 + n]
+
+    async def store_write(self, blob):
+        await self.command(STORE_WRITE, blob)
 
     async def reboot(self, to_fallback=False):
         await self.command(REBOOT, bytes([1 if to_fallback else 0]))
