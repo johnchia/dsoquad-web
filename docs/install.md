@@ -6,28 +6,14 @@ drives over USB. The factory bootloader and SYS stay untouched, so you can alway
 **Tested on:** HW 2.6, SYS 1.52, FPGA 2.61 (shown on the boot screen). Other 2.6–2.72 units with
 SYS ≥ 1.51 should work; HW 2.81 and the DS213 are untested and out of scope.
 
-**You need:** Chrome or Edge on a desktop (Web Serial), a USB cable, and for the one-time setup a
-Linux/macOS/Windows machine with `gcc-arm-none-eabi` to build the fallback scope (step 2).
+**You need:** Chrome or Edge on a desktop (Web Serial) and a USB cable.
 
 ## 1. Back up (recommended)
 
 Power the DSO on normally and plug it in. It appears as a USB drive: copy everything on it
 (settings and the stock calibration files) somewhere safe.
 
-## 2. Install the fallback scope in APP3
-
-The fallback is the gcc Community Edition scope app, rebuilt for the third slot. With it
-installed, holding **○** at power-on gives you a normal standalone scope whatever is in APP1.
-It has no license that allows redistribution, so it's built from source:
-
-    git clone --recursive https://github.com/johnchia/dsoquad-web.git
-    cd dsoquad-web
-    make -C firmware/fallback fetch      # pinned upstream source into ref/dso203_gcc
-    make -C firmware/fallback            # -> firmware/fallback/build/slot3/APP_G251_3.hex
-
-Flash it with DFU mode (next section), then power on holding **○** to check it runs.
-
-## 3. Flash the web-control firmware (once)
+## 2. Flash the web-control firmware (once)
 
 Download the current build from the app: <https://johnchia.github.io/dsoquad-web/firmware/dsoq_app1.hex>
 (or build it: `make -C firmware/app`).
@@ -35,14 +21,14 @@ Download the current build from the app: <https://johnchia.github.io/dsoquad-web
 **DFU mode:** power off, hold **▶/||** (the first button), power on. The DSO shows up as a USB
 drive named like `DFU V3_10_C`. Copy the `.hex` file onto it. The DSO programs it and renames
 the file: `.RDY` means done. It sometimes says `.ERR` even though programming worked, so the
-check that counts is the firmware version in the app (step 4). Power-cycle the DSO.
+check that counts is the firmware version in the app (step 3). Power-cycle the DSO.
 
 On Linux, `tools/dfu-flash.sh <file.hex>` does the copy and refuses files that would touch the
 bootloader, SYS or the FPGA image (`make -C firmware/app flash` for the firmware).
 
 After a normal power-on the DSO's screen shows "DSO Quad Web Control" and the firmware version.
 
-## 4. Connect
+## 3. Connect
 
 Open <https://johnchia.github.io/dsoquad-web/> in Chrome or Edge, press **Connect** and pick
 "DSO Quad Web Control". From then on the page connects by itself when it opens and whenever the
@@ -60,7 +46,7 @@ DSO is plugged in. The Device panel shows the firmware version.
 The browser must run on the computer the DSO is plugged into; the page itself can come from
 anywhere (it's static and talks to the DSO locally).
 
-## 5. Calibrate
+## 4. Calibrate
 
 Device panel → **Calibrate…**. Zero first, with both probes shorted to their ground clips (open
 inputs read ~20 mV off). Gain is optional: connect a DC voltage you know (the wave out held high
@@ -77,14 +63,10 @@ From a checkout: `make -C firmware/app update` (or `python3 tools/dsoq flash fil
 
 ## Getting back to a normal scope
 
-| How | Result |
-|---|---|
-| Power on holding **○** | The fallback scope in APP3, this time only |
-| Hold **□ + ○** for 2 s while web control runs | Same, from inside the firmware |
-| DFU mode, copy another APP1 `.hex` (e.g. the Community Edition built with `make -C firmware/fallback SLOT=1`) | Replaces web control for good |
-
-DFU mode lives in the factory bootloader, which nothing here ever writes, so it always works.
-If an update ever leaves the DSO unresponsive, power it on in DFU mode and copy a `.hex`.
+Put the DSO in DFU mode and copy any other APP `.hex`: the stock app, or the gcc Community
+Edition (`make -C firmware/fallback SLOT=1` builds it for APP1). DFU mode lives in the factory
+bootloader, which nothing here ever writes, so it always works: if an update ever leaves the DSO
+unresponsive, power it on in DFU mode and copy a `.hex`.
 
 ## Troubleshooting
 
