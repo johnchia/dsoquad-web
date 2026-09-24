@@ -167,7 +167,7 @@ Additional host-only commands, because nothing is set on the device:
 
 **Status (M1, owner decision):** routes **3 (hold ○ at power-on)** and **4 (DFU)** are the official escapes. Both are independent of our firmware, and route 3 is verified on the unit. Routes 1, 2 and 5 are implemented as conveniences but aren't being formally tested (`exit` was seen to reply and drop USB). A system reset clears the IWDG (RM0008: everything except the backup domain and the reset flags is reset), so handing over to APP3 after `exit` doesn't carry the watchdog along.
 
-Also worth investigating (not required): whether the DFU bootloader can be entered from software (e.g. a magic value, or jumping to it with the right register state). That would allow a **"Firmware update" button in the web UI** with no button presses at all. If it isn't possible, route 4 remains the one-time manual step for reflashing.
+**Firmware updates without DFU (fw ≥ 0.6, 2026-09-24):** the running firmware stages a new image in the free flash above itself, checks its CRC-32 and vector table, then a RAM-resident routine copies it over APP1 and resets (docs/protocol.md, "Firmware update"). The web page's **Firmware…** dialog installs the build published with the page (`make -C firmware/app release` → `web/firmware/`) or a local `.hex`; the CLI has `dsoq flash`. Verified on the unit: a 21.7 KB install takes ~2 s and it comes back on the new build; an oversized image, a corrupted chunk (CRC mismatch at commit) and an overwrite with different data are all refused with the old firmware left running. DFU remains the recovery route (and is needed for an image over ~42 KB, the free staging space).
 
 ---
 
@@ -228,11 +228,11 @@ Also worth investigating (not required): whether the DFU bootloader can be enter
 - [x] **FFT view:** Hann/Blackman-Harris/flat-top/rectangular windows, dBV or linear, span, power averaging, peak marker and readout; uses the calibration.
 - [x] **Roll mode (fw 0.5.0, verified on hardware 2026-09-24):** `SET_ACQ` mode 4 streams `ROLL` chunks (~20/s) from a continuous unconditional capture, re-armed every 4096 samples. A ramp test showed each restart replaying exactly 146 samples (the pretrigger); the firmware now drops the 150 pretrigger samples of every capture, making the stream continuous (verified: no jumps over 14k samples). Tops out ≈ 75 kS/s. Auto mode rolls at ≥ 100 ms/div; "Roll" can also be chosen explicitly.
 - [x] PEEK/POKE debug messages, for hardware experiments without reflashing.
+- [x] **Firmware update over USB (fw 0.6.0, verified on hardware 2026-09-24):** web **Firmware…** dialog and `dsoq flash`; no DFU swapping (§3.7).
+- [x] Status screen: no grey text (hard to read on the DSO's LCD, owner's note); cyan/white/yellow only.
+- [x] Calibration redone by the owner with shorted inputs (2026-09-24): shorted A reads −8 mV mean, B +1.3 mV (was ~20 mV off).
 - [ ] Measurements: Vpp, Vrms, mean, freq, period, duty, rise/fall. Cursors (ΔT, ΔV).
-- [ ] FFT view (windowed), XY mode, persistence, math (A+B, A−B, A×B).
-- [ ] Roll/stream mode for slow timebases (≥ ~50 ms/div).
-- [ ] Wave generator panel.
-- [ ] Calibration wizard (per-range offset/gain, stored on the device and mirrored in the browser).
+- [ ] XY mode, persistence, math (A+B, A−B, A×B).
 - [ ] Export PNG/CSV; save/load setups as JSON; shareable URL state.
 - [ ] Optional: store power-on defaults on the device (`SAVE_DEFAULTS`).
 

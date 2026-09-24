@@ -19,7 +19,7 @@ function hexLine(type, addr, data) {
 const HEX = [
   hexLine(4, 0, [0x08, 0x00]),
   hexLine(0, 0xC000, [0, 0x50, 0, 0x20, 0x09, 0xC1, 0, 0x08]),
-  hexLine(0, 0xC00B, [1, 2, 3, 4, 5]),
+  hexLine(0, 0xC00B, [1, 2, 3, 4]),
   hexLine(1, 0, []),
 ].join('\n');
 
@@ -35,7 +35,7 @@ sys.stdout.write(protocol.hex_to_image(sys.stdin.read()).hex())`], { cwd: root, 
 
 test('hexToImage refuses images outside APP1 and bad records', () => {
   assert.throws(() => P.hexToImage([hexLine(4, 0, [0x08, 0x01]), hexLine(0, 0xC000, [1, 2])].join('\n')), /not an APP1 image/);
-  assert.throws(() => P.hexToImage([hexLine(4, 0, [0x08, 0x00]), hexLine(0, 0xC000, [1, 2]), hexLine(0, 0xFFFE, [1, 2, 3, 4])].join('\n')), /not an APP1 image/);
+  assert.throws(() => P.hexToImage([hexLine(4, 0, [0x08, 0x00]), hexLine(0, 0xC000, [1, 2]), hexLine(4, 0, [0x08, 0x01]), hexLine(0, 0xBFFE, [1, 2, 3, 4])].join('\n')), /not an APP1 image/);
   assert.throws(() => P.hexToImage(':0400000001020304FF'), /bad hex record/);
 });
 
