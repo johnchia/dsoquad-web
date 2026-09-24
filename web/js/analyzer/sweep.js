@@ -33,7 +33,7 @@ export function rateForDiv(div) {
  *  capDiv, rateReq (for SET_TIMEBASE), rate (exact S/s), samples K, cycles M, spc (samples per
  *  cycle), captureS (seconds per frame)}. K·capDiv = M·(period in timer ticks) exactly.
  */
-export function planPoint(freq, { usable = USABLE, minSpc = 8, prefSpc = 16, minCycles = 2, maxErr = 2e-3 } = {}) {
+export function planPoint(freq, { usable = USABLE, minSpc = 8, prefSpc = 16, minCycles = 2, maxErr = 2e-3, points = null } = {}) {
   const g = planPoints(freq);
   if (!g) return null;
   // Table lengths from the longest down, best frequency accuracy first: each gives another
@@ -46,6 +46,7 @@ export function planPoint(freq, { usable = USABLE, minSpc = 8, prefSpc = 16, min
     if (err <= Math.max(maxErr, g.err)) lengths.push({ n, err });
   }
   lengths.sort((a, b) => a.err - b.err || b.n - a.n);
+  if (points) lengths.splice(0, lengths.length, { n: points });   // forced (hardware tests)
   let best = null;
   for (const { n } of lengths) {
     const c = captureFor(freq, n, { usable, minSpc, prefSpc, minCycles });
