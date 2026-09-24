@@ -356,7 +356,7 @@ generator (external amplifier optional).
 **Needed from the owner for M6.6:** an RC or other known filter, a resistor for R (10–100 Ω, 1 %),
 a large bipolar capacitor, a driver with a datasheet, and any amplifier to try.
 
-### Next release (1.0.1)
+### Release 1.0.1 (2026-09-24)
 - [x] Generator fix (in source, found by the owner 2026-09-24): after an analog frequency high enough to need a short table (e.g. 125 kHz, 16 points), a longer table for a low frequency was refused (`SET_WAVE` restarted the output at the old frequency: 512 × 125 kHz > 2 MS/s), and the page never sent the new frequency, so the output stayed stuck. Now a table that doesn't fit the running frequency turns the output off until `SET_GEN`. The page (live) also recovers on 1.0.0: on a refused table it switches the output off, reloads and starts. Verified on the DSO with 1.0.0: 125 kHz → 1 kHz works.
 - [x] Status screen (in source, not yet released): shows the □ + ○ exit hint only when an app is installed in APP3; otherwise it points at the page's Firmware… button for updates and DFU (▶/|| at power-on) for recovery. Release: bump `FW_VERSION`, commit, `make -C firmware/app release`, push, tag.
 
