@@ -90,5 +90,6 @@ uint32_t __Get(uint8_t kind);
 uint32_t __GetDev_SN(void);
 uint32_t __Read_FIFO(void);   // next FIFO word: A bits 0-7, B 8-15, C bit 16, D bit 17
 void     __Set_Param(uint8_t addr, uint8_t value);
+#define FPGA_SP_CTRLREG 4   // __Set_Param: 1 separate ADCs, 3 interleaved (QuadPawn amx_wavein.c)
 const char *__Chk_HDW(void);  // hardware version string
 const char *__Chk_DFU(void);  // DFU version string

@@ -3,13 +3,15 @@
 import * as P from './protocol.js';
 import { Device, DeviceError } from './device.js';
 import { PlaybackTransport, SerialTransport, SimTransport } from './transport.js';
-import { COLORS, HDIV, ScopeView, fmtSI } from './view.js';
+import { COLORS, HDIV, VDIV, ScopeView, fmtSI } from './view.js';
 import * as Cal from './calibration.js';
 import { openCalDialog } from './cal-ui.js';
 import { openFwDialog, bundledFirmware } from './fw-ui.js';
 import * as Gen from './wavegen.js';
 import { WINDOWS, peak as fftPeak, spectrum } from './fft.js';
 import { SpectrumView } from './spectrum.js';
+import { MEASUREMENTS, measure } from './measure.js';
+import { download, frameCsv, sharedSettings, shareLink, snapshotPng, stamp } from './export.js';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -31,6 +33,11 @@ const DEFAULTS = {
   running: true,
   gen: { shape: 'off', freq: 1000, duty: 50, amp: 100, offset: 50 },
   fft: { on: false, window: 'hann', scale: 'db', span: 1, avg: 1 },
+  math: { op: 'off', vdiv: 1, posDiv: 4 },
+  xy: false,
+  persist: 'off',
+  cursors: { mode: 'off', trace: 'a', tDiv: [3, 7], vDiv: [5, 3] },
+  meas: ['pp', 'mean', 'rms', 'max', 'min', 'freq'],
   backlight: 50,
 };
 
@@ -59,11 +66,23 @@ function merge(def, v) {
     for (const k of Object.keys(def)) out[k] = merge(def[k], v && typeof v === 'object' ? v[k] : undefined);
     return out;
   }
-  return typeof v === typeof def ? v : def;
+  if (typeof v !== typeof def) return def;
+  return v;
+}
+
+/** merge() for arrays of any length (the measurement list): keep known string items. */
+function mergeList(def, v, known) {
+  return Array.isArray(v) ? v.filter((x) => typeof x === 'string' && known.includes(x)) : def.slice();
+}
+
+function mergeSettings(v) {
+  const s = merge(DEFAULTS, v);
+  s.meas = mergeList(DEFAULTS.meas, v?.meas, Object.keys(MEASUREMENTS));
+  return s;
 }
 
 function loadSettings() {
-  try { return merge(DEFAULTS, JSON.parse(localStorage.getItem(STORE_KEY))); } catch { return merge(DEFAULTS, null); }
+  try { return mergeSettings(JSON.parse(localStorage.getItem(STORE_KEY))); } catch { return mergeSettings(null); }
 }
 
 function saveSettings() {
@@ -73,7 +92,10 @@ function saveSettings() {
 
 // ------------------------------------------------------------------ derived values
 
-const sampleRate = () => Math.min(P.MAX_RATE, SAMPLES_PER_DIV / settings.tdiv);
+/** Channel B's ADC is needed unless B, math and XY are all off; then fast timebases can
+ * interleave both ADCs on channel A (72 MS/s). */
+const needB = () => settings.ch[1].on || settings.math.op !== 'off' || settings.xy;
+const sampleRate = () => Math.min(needB() ? P.MAX_RATE : P.IL_RATE, SAMPLES_PER_DIV / settings.tdiv);
 /** Offset register that puts the channel's 0 V at its position marker. */
 const offsetCode = (ch) => Cal.offsetFor(cal, ch, settings.ch[ch].range, P.ADC_ZERO + settings.ch[ch].posDiv * P.CODES_PER_DIV);
 
@@ -148,6 +170,7 @@ const send = {
 /** After editing `settings`: send what changed, persist, refresh the UI. */
 function changed(apply) {
   apply?.();
+  view.clearPersistence();
   saveSettings();
   syncControls();
   view.invalidate();
@@ -260,6 +283,55 @@ async function pollState() {
 
 // ------------------------------------------------------------------ frames
 
+const MATH_OPS = {
+  'a+b': { label: 'A + B', unit: 'V', f: (a, b) => a + b },
+  'a-b': { label: 'A − B', unit: 'V', f: (a, b) => a - b },
+  'b-a': { label: 'B − A', unit: 'V', f: (a, b) => b - a },
+  'a*b': { label: 'A × B', unit: 'V²', f: (a, b) => a * b },
+};
+const MATH_VDIVS = [];
+for (let e = -2; e <= 2; e++) for (const m of [1, 2, 5]) MATH_VDIVS.push(+(m * 10 ** e).toPrecision(1));
+
+const voltsCache = new WeakMap();
+/** Calibrated volts of a frame's analog channels: {a, b (null if interleaved), m (math or null)}. */
+function frameVolts(f) {
+  let v = voltsCache.get(f);
+  if (v) return v;
+  const conv = (codes, i) => {
+    if (!codes) return null;
+    const { zero, cpd } = frameScale(i, f.ch[i]);
+    const k = (ranges[f.ch[i].range] ?? 1) / cpd, out = new Float32Array(codes.length);
+    for (let j = 0; j < codes.length; j++) out[j] = (codes[j] - zero) * k;
+    return out;
+  };
+  v = { a: conv(f.a, 0), b: conv(f.b, 1), math: {} };
+  voltsCache.set(f, v);
+  return v;
+}
+
+/** Math trace data for the current operation (null without channel B). */
+function mathVolts(f) {
+  const v = frameVolts(f), op = MATH_OPS[settings.math.op];
+  if (!op || !v.b) return null;
+  let m = v.math[settings.math.op];
+  if (!m) {
+    m = v.math[settings.math.op] = new Float32Array(v.a.length);
+    for (let j = 0; j < m.length; j++) m[j] = op.f(v.a[j], v.b[j]);
+  }
+  return m;
+}
+
+/** The traces on screen for frame f: [{key, label, color, posDiv, vdiv, unit, data}]. */
+function frameTraces(f) {
+  if (!f) return [];
+  const v = frameVolts(f), out = [];
+  if (settings.ch[0].on) out.push({ key: 'a', label: 'A', color: COLORS.a, posDiv: settings.ch[0].posDiv, vdiv: ranges[settings.ch[0].range] ?? 1, unit: 'V', data: v.a });
+  if (settings.ch[1].on && v.b) out.push({ key: 'b', label: 'B', color: COLORS.b, posDiv: settings.ch[1].posDiv, vdiv: ranges[settings.ch[1].range] ?? 1, unit: 'V', data: v.b });
+  const m = mathVolts(f);
+  if (m) out.push({ key: 'm', label: 'M', color: COLORS.m, posDiv: settings.math.posDiv, vdiv: settings.math.vdiv, unit: MATH_OPS[settings.math.op].unit, data: m });
+  return out;
+}
+
 // ------------------------------------------------------------------ FFT
 
 let fftAvg = [null, null], fftKey = '', fftTraces = [];
@@ -269,22 +341,18 @@ function fftReset() { fftAvg = [null, null]; fftTraces = []; spectrumView.invali
 /** Spectrum of each shown channel, power-averaged over settings.fft.avg frames. */
 function updateSpectrum(f) {
   const s = settings.fft;
-  const key = `${f.rate}/${f.ch.map((c) => `${c.range}.${c.coupling}`).join()}/${s.window}/${s.avg}`;
+  const key = `${f.rate}/${f.interleaved}/${f.ch.map((c) => `${c.range}.${c.coupling}`).join()}/${s.window}/${s.avg}`;
   if (key !== fftKey) { fftKey = key; fftAvg = [null, null]; }
   fftTraces = [];
-  [[f.a, 0], [f.b, 1]].forEach(([codes, i]) => {
-    if (!settings.ch[i].on) return;
-    const { zero, cpd } = frameScale(i, f.ch[i]);
-    const k = (ranges[f.ch[i].range] ?? 1) / cpd;
-    const x = new Float64Array(codes.length - P.STALE_SAMPLES);
-    for (let j = 0; j < x.length; j++) x[j] = (codes[j + P.STALE_SAMPLES] - zero) * k;
-    const sp = spectrum(x, s.window);
+  const v = frameVolts(f);
+  [[v.a, 0], [v.b, 1]].forEach(([volts, i]) => {
+    if (!settings.ch[i].on || !volts) return;
+    const sp = spectrum(volts.subarray(f.stale), s.window);
     let acc = fftAvg[i];
-    if (!acc || acc.length !== sp.rms.length) acc = fftAvg[i] = Float64Array.from(sp.rms, (v) => v * v);
+    if (!acc || acc.length !== sp.rms.length) acc = fftAvg[i] = Float64Array.from(sp.rms, (x) => x * x);
     else { const a = 1 / s.avg; for (let j = 0; j < acc.length; j++) acc[j] += (sp.rms[j] ** 2 - acc[j]) * a; }
     const rms = Float64Array.from(acc, Math.sqrt);
-    const binHz = sp.binHz(f.rate);
-    fftTraces.push({ name: 'AB'[i], color: COLORS[i ? 'b' : 'a'], rms, binHz, peak: fftPeak(rms) });
+    fftTraces.push({ name: 'AB'[i], color: COLORS[i ? 'b' : 'a'], rms, binHz: sp.binHz(f.rate), peak: fftPeak(rms) });
   });
   spectrumView.invalidate();
 }
@@ -349,32 +417,6 @@ function scheduleMeasure() {
   setTimeout(() => { measurePending = false; lastMeasure = performance.now(); updateReadouts(); }, Math.max(0, 250 - (performance.now() - lastMeasure)));
 }
 
-/** Measurements in volts; `zero` is the code of 0 V and `cpd` the codes per division. */
-function measure(codes, zero, cpd, vdiv, rate) {
-  const offset = zero;
-  let lo = 255, hi = 0, sum = 0, sq = 0;
-  for (const c of codes) { if (c < lo) lo = c; if (c > hi) hi = c; sum += c; sq += c * c; }
-  const n = codes.length, k = vdiv / cpd;
-  const mean = sum / n;
-  // Frequency from mid-level crossings with hysteresis (8-bit noise is a few codes).
-  let freq = NaN;
-  if (hi - lo >= 8) {
-    const mid = (lo + hi) / 2, hyst = (hi - lo) / 8;
-    const rises = [];
-    let armed = false;
-    for (let i = 0; i < n; i++) {
-      if (codes[i] < mid - hyst) armed = true;
-      else if (armed && codes[i] > mid + hyst) { rises.push(i); armed = false; }
-    }
-    if (rises.length >= 2) freq = (rises.length - 1) * rate / (rises[rises.length - 1] - rises[0]);
-  }
-  return {
-    max: (hi - offset) * k, min: (lo - offset) * k, pp: (hi - lo) * k, mean: (mean - offset) * k,
-    rms: Math.sqrt(Math.max(0, sq / n - 2 * offset * mean + offset * offset)) * k,
-    freq, clipped: lo === 0 || hi === 255,
-  };
-}
-
 function updateReadouts() {
   const now = performance.now();
   const fps = frameTimes.length > 1 ? (frameTimes.length - 1) / ((frameTimes[frameTimes.length - 1] - frameTimes[0]) / 1000) : 0;
@@ -397,42 +439,93 @@ function updateReadouts() {
   out.replaceChildren();
   if (!f) return;
   const peaks = new Map(fftTraces.map((t) => [t.name, t]));
-  [['A', f.a, 0], ['B', f.b, 1]].forEach(([name, codes, i]) => {
-    if (!settings.ch[i].on) return;
-    const { zero, cpd } = frameScale(i, f.ch[i]);
-    const m = measure(codes.subarray(P.STALE_SAMPLES), zero, cpd, ranges[f.ch[i].range] ?? 1, f.rate);
+  for (const t of frameTraces(f)) {
+    const m = measure(t.data.subarray(f.stale), f.rate, t.vdiv / P.CODES_PER_DIV);
     const div = document.createElement('div');
-    div.className = `ch ch-${name.toLowerCase()}`;
-    const parts = [
-      `<b>${name}</b>`, `Vpp ${fmtSI(m.pp, 'V')}`, `Vavg ${fmtSI(m.mean, 'V')}`, `Vrms ${fmtSI(m.rms, 'V')}`,
-      `Max ${fmtSI(m.max, 'V')}`, `Min ${fmtSI(m.min, 'V')}`, `Freq ${Number.isFinite(m.freq) ? fmtSI(m.freq, 'Hz', 5) : '--'}`,
-    ];
-    const t = settings.fft.on && peaks.get(name);
-    if (t) parts.push(`FFT peak ${fmtSI(t.peak.bin * t.binHz, 'Hz', 4)} ${(20 * Math.log10(Math.max(t.peak.rms, 1e-9))).toFixed(1)} dBV`);
-    if (m.clipped) parts.push('<span style="color:var(--err)">clipped</span>');
+    div.className = `ch ch-${t.key}`;
+    const parts = [`<b>${t.label}</b>`];
+    for (const k of settings.meas) {
+      const d = MEASUREMENTS[k], unit = d.unit === 'V' ? t.unit : d.unit;
+      parts.push(`${d.label} ${m.limited.has(k) ? '&lt; ' : ''}${fmtSI(m[k], unit, d.digits ?? 3)}`);
+    }
+    const pk = settings.fft.on && peaks.get(t.label);
+    if (pk) parts.push(`FFT peak ${fmtSI(pk.peak.bin * pk.binHz, 'Hz', 4)} ${(20 * Math.log10(Math.max(pk.peak.rms, 1e-9))).toFixed(1)} dBV`);
+    if (t.key !== 'm') {
+      const codes = t.key === 'a' ? f.a : f.b;
+      let clipped = false;
+      for (let i = f.stale; i < codes.length && !clipped; i++) clipped = codes[i] <= 0 || codes[i] >= 255;
+      if (clipped) parts.push('<span style="color:var(--err)">clipped</span>');
+    }
     div.innerHTML = parts.map((p) => `<span>${p}</span>`).join('');
     out.append(div);
-  });
+  }
+  const cur = cursorText(f);
+  if (cur) {
+    const div = document.createElement('div');
+    div.className = 'ch ch-cursor';
+    div.innerHTML = cur.map((p) => `<span>${p}</span>`).join('');
+    out.append(div);
+  }
 }
+
+/** Cursor readout parts, or null when the cursors are off. */
+function cursorText(f) {
+  const c = settings.cursors;
+  if (c.mode === 'off') return null;
+  const parts = ['<b>Cursors</b>'];
+  if ((c.mode === 't' || c.mode === 'tv') && !settings.xy) {
+    const [t1, t2] = c.tDiv.map((d) => (d - trigPosDiv(f)) * settings.tdiv), dt = t2 - t1;
+    parts.push(`t1 ${fmtSI(t1, 's')}`, `t2 ${fmtSI(t2, 's')}`, `Δt ${fmtSI(dt, 's')}`, `1/Δt ${fmtSI(1 / Math.abs(dt), 'Hz')}`);
+  }
+  if (c.mode === 'v' || c.mode === 'tv') {
+    const t = cursorTrace();
+    if (t) {
+      const [v1, v2] = c.vDiv.map((d) => (d - t.posDiv) * t.vdiv);
+      parts.push(`${t.label}: V1 ${fmtSI(v1, t.unit)}`, `V2 ${fmtSI(v2, t.unit)}`, `ΔV ${fmtSI(v2 - v1, t.unit)}`);
+    }
+  }
+  return parts;
+}
+
+/** The trace the voltage cursors read (XY: the vertical one, channel B). */
+function cursorTrace() {
+  const key = settings.xy ? 'b' : settings.cursors.trace;
+  if (key === 'm') return MATH_OPS[settings.math.op] ? { label: 'M', posDiv: settings.math.posDiv, vdiv: settings.math.vdiv, unit: MATH_OPS[settings.math.op].unit } : null;
+  const i = key === 'b' ? 1 : 0, c = settings.ch[i];
+  return settings.xy ? { label: 'B', posDiv: VDIV / 2, vdiv: ranges[c.range] ?? 1, unit: 'V' }
+    : { label: key.toUpperCase(), posDiv: c.posDiv, vdiv: ranges[c.range] ?? 1, unit: 'V' };
+}
+
+const trigPosDiv = (f) => (f?.roll ? HDIV : settings.trigPosDiv);
+
 setInterval(scheduleMeasure, 500);  // keeps the status badge current when frames stop
 
 // ------------------------------------------------------------------ view
 
-const view = new ScopeView($('scope'), () => ({
-  frame: lastFrame,
-  ch: settings.ch,
-  digital: { on: settings.digital },
-  // Roll: the newest sample sits at the right edge and there's no trigger to mark.
-  trig: { source: settings.trig.source, levelDiv: settings.trig.levelDiv, posDiv: lastFrame?.roll ? HDIV : settings.trigPosDiv },
-  roll: !!lastFrame?.roll,
-  tdiv: settings.tdiv,
-  vdivs: settings.ch.map((c) => ranges[c.range] ?? 1),
-  scale: frameScale,
-}), (id, value) => {
-  if (id === 'pos0' || id === 'pos1') {
-    const i = +id[3];
+const view = new ScopeView($('scope'), () => {
+  const f = lastFrame, traces = frameTraces(f), src = settings.trig.source;
+  const byKey = (k) => traces.find((t) => t.key === k);
+  const c = settings.cursors;
+  return {
+    frame: f,
+    traces,
+    digital: { on: settings.digital },
+    // Roll: the newest sample sits at the right edge and there's no trigger to mark.
+    trig: { source: src, levelDiv: settings.trig.levelDiv, posDiv: trigPosDiv(f), levelTrace: src < 2 ? settings.ch[src] : null },
+    roll: !!f?.roll,
+    tdiv: settings.tdiv,
+    xy: settings.xy && byKey('a') && byKey('b') ? { x: byKey('a'), y: byKey('b') } : null,
+    persist: settings.persist,
+    cursors: { t: c.mode === 't' || c.mode === 'tv', v: c.mode === 'v' || c.mode === 'tv', tDiv: c.tDiv, vDiv: c.vDiv },
+  };
+}, (id, value) => {
+  if (id === 'pos:a' || id === 'pos:b') {
+    const i = id === 'pos:a' ? 0 : 1;
     settings.ch[i].posDiv = +clamp(value, 0, 8).toFixed(2);
     changed(() => send.channel(i));
+  } else if (id === 'pos:m') {
+    settings.math.posDiv = +clamp(value, 0, 8).toFixed(2);
+    changed();
   } else if (id === 'trigLevel') {
     const src = settings.ch[settings.trig.source];
     settings.trig.levelDiv = +clamp(value - src.posDiv, -8, 8).toFixed(2);
@@ -440,6 +533,12 @@ const view = new ScopeView($('scope'), () => ({
   } else if (id === 'trigPos') {
     settings.trigPosDiv = +clamp(value, 0, HDIV).toFixed(2);
     changed();
+  } else if (id.startsWith('curT') || id.startsWith('curV')) {
+    const arr = id[3] === 'T' ? settings.cursors.tDiv : settings.cursors.vDiv;
+    arr[+id[4]] = +clamp(value, 0, id[3] === 'T' ? HDIV : VDIV).toFixed(3);
+    saveSettings();
+    view.invalidate();
+    scheduleMeasure();
   }
 });
 
@@ -481,6 +580,15 @@ function genActualText() {
   }
   const plan = Gen.planPoints(g.freq);
   return plan ? `actual ${fmtSI(plan.actual, 'Hz', 6)} · ${plan.n} points/period` : `max ${fmtSI(Gen.MAX_ANALOG_HZ, 'Hz')} for analog shapes`;
+}
+
+function fillDisplayControls() {
+  $('math-vdiv').replaceChildren(...MATH_VDIVS.map((v) => new Option(String(v), v)));
+  $('meas-chips').replaceChildren(...Object.entries(MEASUREMENTS).map(([k, d]) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.value = k; b.textContent = d.label;
+    return b;
+  }));
 }
 
 function fillTdiv() {
@@ -544,6 +652,21 @@ function syncControls() {
   [...$('fft-span').options].forEach((o) => { o.textContent = `${fmtSI(nyq * +o.value, 'Hz', 3)}${+o.value === 1 ? ' (full)' : ''}`; });
   $('fft-span').value = f.span;
   $('fft-avg').value = f.avg;
+  $('math-op').value = s.math.op;
+  $('math-vdiv-row').hidden = s.math.op === 'off';
+  const mu = MATH_OPS[s.math.op]?.unit ?? 'V';
+  [...$('math-vdiv').options].forEach((o) => { o.textContent = `${fmtSI(+o.value, mu)}/div`; });
+  $('math-vdiv').value = s.math.vdiv;
+  $('xy-on').checked = s.xy;
+  segSet('persist', s.persist);
+  segSet('cur-mode', s.cursors.mode);
+  segSet('cur-trace', s.cursors.trace);
+  $('cur-trace-row').hidden = !(s.cursors.mode === 'v' || s.cursors.mode === 'tv') || s.xy;
+  document.querySelector('.seg[data-for="cur-trace"] button[value="m"]').disabled = s.math.op === 'off';
+  document.querySelectorAll('#meas-chips button').forEach((b) => b.classList.toggle('active', s.meas.includes(b.value)));
+  const rate = P.actualRate(sampleRate()), want = SAMPLES_PER_DIV / s.tdiv;
+  $('rate-note').textContent = rate > P.MAX_RATE ? `${fmtSI(rate, 'S/s')}: both ADCs on channel A`
+    : want > P.MAX_RATE && needB() ? `${fmtSI(rate, 'S/s')}; 72 MS/s with B, math and XY off` : `${fmtSI(rate, 'S/s')}`;
   $('backlight').value = s.backlight;
   $('backlight-out').textContent = s.backlight ? `${s.backlight}%` : 'off';
 
@@ -570,7 +693,8 @@ function syncControls() {
 
 function bind() {
   ['a', 'b'].forEach((p, i) => {
-    $(`${p}-on`).onchange = (e) => { settings.ch[i].on = e.target.checked; saveSettings(); syncControls(); view.invalidate(); };
+    // B's ADC doubles channel A's rate when B isn't needed, so B on/off can change the rate.
+    $(`${p}-on`).onchange = (e) => { settings.ch[i].on = e.target.checked; changed(i ? send.rate : null); };
     $(`${p}-range`).onchange = (e) => { settings.ch[i].range = +e.target.value; changed(() => send.channel(i)); };
     $(`${p}-pos`).oninput = (e) => { settings.ch[i].posDiv = +e.target.value; changed(() => send.channel(i)); };
   });
@@ -589,6 +713,22 @@ function bind() {
   $('fft-window').onchange = (e) => { settings.fft.window = e.target.value; fftReset(); changed(); };
   $('fft-span').onchange = (e) => { settings.fft.span = +e.target.value; changed(); };
   $('fft-avg').onchange = (e) => { settings.fft.avg = +e.target.value; fftReset(); changed(); };
+  $('math-op').onchange = (e) => { settings.math.op = e.target.value; changed(send.rate); };
+  $('math-vdiv').onchange = (e) => { settings.math.vdiv = +e.target.value; changed(); };
+  $('xy-on').onchange = (e) => { settings.xy = e.target.checked; changed(send.rate); };
+  $('meas-chips').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const k = b.value, list = settings.meas;
+    settings.meas = list.includes(k) ? list.filter((x) => x !== k) : Object.keys(MEASUREMENTS).filter((x) => x === k || list.includes(x));
+    changed();
+  };
+  $('save-png').onclick = savePng;
+  $('save-csv').onclick = saveCsv;
+  $('share').onclick = async () => {
+    const url = shareLink(settings);
+    try { await navigator.clipboard.writeText(url); toast('Link with these settings copied', 'info'); } catch { prompt('Link with these settings:', url); }
+  };
   $('backlight').oninput = (e) => { settings.backlight = +e.target.value; changed(send.system); };
 
   document.querySelectorAll('.seg').forEach((seg) => seg.addEventListener('click', (e) => {
@@ -603,6 +743,9 @@ function bind() {
       changed(send.gen);
     }
     if (name === 'fft-scale') { settings.fft.scale = b.value; changed(); }
+    if (name === 'persist') { settings.persist = b.value; changed(); }
+    if (name === 'cur-mode') { settings.cursors.mode = b.value; changed(); }
+    if (name === 'cur-trace') { settings.cursors.trace = b.value; changed(); }
   }));
 
   $('run').onclick = toggleRun;
@@ -635,21 +778,15 @@ function bind() {
     toast,
   });
 
-  $('export').onclick = () => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(settings, null, 2)], { type: 'application/json' }));
-    a.download = 'dsoquad-settings.json';
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
+  $('export').onclick = () => download(new Blob([JSON.stringify(settings, null, 2)], { type: 'application/json' }), 'dsoquad-settings.json');
   $('import').onclick = () => $('import-file').click();
   $('import-file').onchange = async (e) => {
     const file = e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    try { applySettings(merge(DEFAULTS, JSON.parse(await file.text()))); toast('Settings imported', 'info'); } catch (err) { toast(`Import failed: ${err.message}`); }
+    try { applySettings(mergeSettings(JSON.parse(await file.text()))); toast('Settings imported', 'info'); } catch (err) { toast(`Import failed: ${err.message}`); }
   };
-  $('reset').onclick = () => applySettings(merge(DEFAULTS, null));
+  $('reset').onclick = () => applySettings(mergeSettings(null));
 
   document.addEventListener('keydown', (e) => {
     if (suspended || e.target.closest('input, select, textarea, dialog') || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -692,6 +829,36 @@ async function onConnectClick() {
   await connect(t);
 }
 
+// ------------------------------------------------------------------ saving
+
+/** Text of the scale bar and measurement rows, for captions and CSV headers. */
+function screenSummary() {
+  const rows = [[['scale-a', 'scale-b', 'scale-t', 'scale-trig'].map((id) => $(id).textContent).join('   '), null]];
+  document.querySelectorAll('#measure .ch').forEach((d) => {
+    const key = [...d.classList].find((c) => c.startsWith('ch-'))?.slice(3);
+    rows.push([[...d.querySelectorAll(':scope > span')].map((x) => x.textContent).join('  '), COLORS[key] ?? null]);
+  });
+  return rows;
+}
+
+async function savePng() {
+  const canvases = [$('scope')];
+  if (!$('spectrum').hidden) canvases.push($('spectrum'));
+  const caption = [...screenSummary(), [`DSO Quad · ${fmtSI(lastFrame?.rate ?? P.actualRate(sampleRate()), 'S/s')} · ${new Date().toLocaleString()}`, '#8b949e']];
+  download(await snapshotPng(canvases, caption), `dsoquad_${stamp()}.png`);
+}
+
+function saveCsv() {
+  const f = lastFrame;
+  if (!f) { toast('No capture to save yet'); return; }
+  const header = [
+    `DSO Quad capture ${new Date().toISOString()}`, `sample rate ${f.rate} S/s${f.interleaved ? ' (interleaved)' : ''}`,
+    `trigger at t = 0${f.roll ? ' (roll mode: t = 0 is the newest sample)' : ''}`, ...screenSummary().map(([t]) => t),
+  ];
+  const traces = frameTraces(f);
+  download(new Blob([frameCsv(f, traces, header)], { type: 'text/csv' }), `dsoquad_${stamp()}.csv`);
+}
+
 // ------------------------------------------------------------------ misc UI
 
 function status(text, cls = '') {
@@ -719,10 +886,20 @@ function fmtDuration(s) {
 fillRangeSelects();
 fillTdiv();
 fillFftSelects();
+fillDisplayControls();
 bind();
 syncControls();
 document.documentElement.style.setProperty('--a', COLORS.a);
 document.documentElement.style.setProperty('--b', COLORS.b);
+
+const shared = sharedSettings(location.hash);
+if (shared) {
+  settings = mergeSettings(shared);
+  saveSettings();
+  history.replaceState(null, '', location.pathname + location.search);
+  syncControls();
+  toast('Settings loaded from the link', 'info');
+}
 
 const params = new URLSearchParams(location.search);
 if (params.has('sim')) {

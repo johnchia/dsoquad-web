@@ -12,8 +12,10 @@ enum { ACQ_STOP = 0, ACQ_NORMAL = 1, ACQ_AUTO = 2, ACQ_SINGLE = 3, ACQ_ROLL = 4 
 #define FRAME_LAST      0x04
 #define FRAME_ROLL      0x08  // roll-mode chunk (sent as MSG_ROLL); frame_no = index of its first sample
 #define FRAME_GAP       0x10  // roll: samples were lost before this chunk
+#define FRAME_INTERLEAVED 0x20  // 72 MS/s: both ADCs sample channel A on alternate clock edges
 
 #define ROLL_CHUNK_MAX  256   // samples per roll chunk
+#define SCOPE_MAX_RATE  36000000u  // per ADC; interleaving both on channel A doubles it
 
 struct scope_channel { uint8_t range, coupling, offset; };
 
@@ -22,6 +24,7 @@ struct scope_state {
   struct scope_channel ch[2];
   uint32_t rate_req, rate_actual;
   uint16_t psc, arr;
+  uint8_t interleave;       // both ADCs on channel A (rate_actual is the combined rate)
   uint8_t trig_source, trig_kind, trig_level;
   uint16_t trig_width;
   uint16_t auto_ms;

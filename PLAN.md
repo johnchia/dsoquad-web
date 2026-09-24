@@ -231,9 +231,10 @@ Additional host-only commands, because nothing is set on the device:
 - [x] **Firmware update over USB (fw 0.6.0, verified on hardware 2026-09-24):** web **Firmware…** dialog and `dsoq flash`; no DFU swapping (§3.7).
 - [x] Status screen: no grey text (hard to read on the DSO's LCD, owner's note); cyan/white/yellow only.
 - [x] Calibration redone by the owner with shorted inputs (2026-09-24): shorted A reads −8 mV mean, B +1.3 mV (was ~20 mV off).
-- [ ] Measurements: Vpp, Vrms, mean, freq, period, duty, rise/fall. Cursors (ΔT, ΔV).
-- [ ] XY mode, persistence, math (A+B, A−B, A×B).
-- [ ] Export PNG/CSV; save/load setups as JSON; shareable URL state.
+- [x] Measurements (2026-09-24, `web/js/measure.js`, unit-tested): Vpp, Vavg, Vrms, AC rms, max, min, top, base, amplitude, frequency, period, duty, ±width, rise/fall 10–90 % (flagged "<" at the time resolution); mean/rms over whole cycles. Selectable in a Measure panel. Cursors: time (Δt, 1/Δt) and voltage (on A, B or math), draggable.
+- [x] XY mode, persistence (short/long/infinite), math (A+B, A−B, B−A, A×B) with its own scale and marker.
+- [x] Export PNG (screen + scales + measurements) and CSV (volts, time from the trigger); settings JSON export/import (M3); shareable link (settings in the URL fragment).
+- [x] **72 MS/s interleave (fw 0.7.0, verified on hardware 2026-09-24):** automatic when B, math and XY are off and the timebase wants more than 36 MS/s. Needs `ADC_MODE` 1 **and** FPGA control register 4 = 3 (with `ADC_MODE` alone ADC B sampled on A's edges: it repeated A one word late). B range index 8 routes channel A to ADC B. Each word holds two samples, **B first**; the page balances the ADCs' zero error by the difference of the means. A 2 MHz square's edge at 72 MS/s: 108, 109, 113, 128, 144, 155 (monotonic, no zigzag).
 - [ ] Optional: store power-on defaults on the device (`SAVE_DEFAULTS`).
 
 ### M5: Polish and release (3–5 days)

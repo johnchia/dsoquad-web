@@ -37,7 +37,7 @@ The firmware deals only in raw hardware values; calibration and physical units l
 | `0x02` | PING | any bytes | `PONG` (same bytes) |
 | `0x03` | GET_STATE | – | `STATE` |
 | `0x10` | SET_CHANNEL | `ch u8` (0 A, 1 B), `range u8`, `coupling u8` (0 DC, 1 AC), `offset u8` | `ACK` |
-| `0x11` | SET_TIMEBASE | `rate_hz u32` | `ACK` (read `STATE` for the actual rate) |
+| `0x11` | SET_TIMEBASE | `rate_hz u32`, up to 72 000 000; above 36 MS/s both ADCs interleave on channel A (fw ≥ 0.7) | `ACK` (read `STATE` for the actual rate) |
 | `0x12` | SET_TRIGGER | `source u8` (0 A, 1 B, 2 C, 3 D), `kind u8` (0–7, see below), `level u8` (ADC code), `width u16` (pulse-width threshold, samples) | `ACK` |
 | `0x13` | SET_ACQ | `mode u8` (0 stop, 1 normal, 2 auto, 3 single, 4 roll), `auto_ms u16` | `ACK` |
 | `0x14` | SET_GEN | `mode u8` (0 off, 1 square, 2 analog), `freq_hz u32`, `duty u8` (% for square) | `ACK` |
@@ -107,7 +107,7 @@ without a protocol version bump. (Firmware before 0.3.0 sent only the first 39 b
 | Offset | Field |
 |---|---|
 | 0 | `frame_no u32` |
-| 4 | `flags u8`: bit0 triggered, bit1 auto (untriggered), bit2 last frame of a single |
+| 4 | `flags u8`: bit0 triggered, bit1 auto (untriggered), bit2 last frame of a single, bit3 roll chunk, bit4 roll gap, bit5 interleaved |
 | 5 | `rate_actual u32` |
 | 9 | ch A `range, coupling, offset`, ch B same (6 bytes) |
 | 15 | trigger `source, kind, level` (3 bytes) |
@@ -118,6 +118,17 @@ without a protocol version bump. (Firmware before 0.3.0 sent only the first 39 b
 Samples are raw codes, with the FPGA 2.61 channel-B bit-swap already corrected.
 The first 1–4 samples of a frame are stale (left in the FPGA FIFO from before the capture);
 hosts should ignore samples 0–3.
+
+**Interleaved frames (bit 5, fw ≥ 0.7):** at a requested rate above 36 MS/s the firmware clocks
+both ADCs at 36 MS/s on opposite clock edges (`ADC_MODE` 1 plus FPGA control register 4 = 3;
+`ADC_MODE` alone leaves B sampling on A's edges) and routes channel A to ADC B too (SYS range
+index 8, "the other channel", as QuadPawn does). `rate_actual` is 72 MS/s, and each sample's `A` and `B`
+bytes are two consecutive samples of channel A, **B first**, so a frame holds 8192 samples of
+channel A.
+The pretrigger and the stale samples count words: 300 samples and 8 samples. Channel B is
+unavailable, and roll mode is refused, while interleaving. The two ADCs have their own zero
+error; the web page shifts ADC B by the difference of the two means. Measured with a 1 MHz square:
+the B byte falls between the previous word's A and this word's A.
 
 ### TABLE ids (raw SYS structures, little-endian)
 

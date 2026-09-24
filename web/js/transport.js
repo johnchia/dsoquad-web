@@ -312,6 +312,7 @@ export class SimTransport extends VirtualTransport {
   }
 
   nextFrame(now) {
+    if (this.state.rateActual > P.MAX_RATE) return this.nextInterleaved(now);
     const s = this.state, n = 4096, pre = 150, rate = s.rateActual;
     // Build a longer buffer at a random phase, then find a trigger event to align on.
     const extra = Math.min(40000, Math.ceil(rate / 50) + 2);
@@ -348,6 +349,27 @@ export class SimTransport extends VirtualTransport {
     return this.frameBody(flags, sl(raw[0]), sl(raw[1]), sl(raw[2]), pre);
   }
 }
+
+/** 72 MS/s: both ADCs on channel A, alternate samples in the two bytes of each word (ADC B
+ * with its own zero error), triggered on channel A's rising edge. */
+SimTransport.prototype.nextInterleaved = function nextInterleaved() {
+  const s = this.state, n = 4096, pre = 150, rate = s.rateActual;
+  const t0 = Math.random() * 10, total = 2 * n + 4000;
+  const x = new Uint8Array(total);
+  for (let i = 0; i < total; i++) x[i] = this.code(0, this.voltsA(t0 + i / rate));
+  let at = -1;
+  for (let i = 2 * pre + 1; i < total - 2 * n; i++) if (x[i - 1] < s.trigLevel && x[i] >= s.trigLevel) { at = i & ~1; break; }
+  let flags = 1 | P.FRAME_INTERLEAVED;
+  if (at < 0) { at = 2 * pre; flags = 2 | P.FRAME_INTERLEAVED; }
+  const a = new Uint8Array(n), b = new Uint8Array(n), cd = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const j = at - 2 * pre + 2 * i;
+    const [first, second] = P.IL_B_FIRST ? [b, a] : [a, b];
+    first[i] = x[j]; second[i] = x[j + 1];
+    b[i] = Math.min(255, b[i] + 3);   // ADC B reads 3 codes high
+  }
+  return this.frameBody(flags, a, b, cd, pre);
+};
 
 /** Replays a recording made with `python3 tools/dsoq record`. Settings are accepted but the
  * frames are what was recorded (each carries the settings it was captured with). */

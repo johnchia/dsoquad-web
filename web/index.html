@@ -29,6 +29,11 @@
       </select>
       <span id="trig-status" class="badge">Stop</span>
     </div>
+    <div class="save">
+      <button id="save-png" title="Save the screen as a PNG image">PNG</button>
+      <button id="save-csv" title="Save the current capture as CSV (volts)">CSV</button>
+      <button id="share" title="Copy a link that opens this page with these settings">Link</button>
+    </div>
     <div class="stats"><span id="fps">– fps</span> · <span id="frame-no">frame –</span> · <span id="rate">– S/s</span></div>
   </header>
 
@@ -68,6 +73,7 @@
         <legend>Horizontal</legend>
         <div class="row"><label for="tdiv">Time/div</label><select id="tdiv"></select></div>
         <div class="row"><label for="tpos">Trigger at</label><input type="range" id="tpos" min="0" max="10" step="0.05"><output id="tpos-out"></output></div>
+        <div class="row note"><label></label><span id="rate-note"></span></div>
       </fieldset>
 
       <fieldset class="trig">
@@ -105,6 +111,21 @@
         <div class="row"><label>Scale</label><span class="seg" data-for="fft-scale"><button value="db">dBV</button><button value="lin">Linear</button></span></div>
         <div class="row"><label for="fft-span">Span</label><select id="fft-span"></select></div>
         <div class="row"><label for="fft-avg">Average</label><select id="fft-avg"><option value="1">Off</option><option value="4">4</option><option value="16">16</option><option value="64">64</option></select></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Measure</legend>
+        <div class="chips" id="meas-chips"></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Display</legend>
+        <div class="row"><label>Cursors</label><span class="seg" data-for="cur-mode"><button value="off">Off</button><button value="t">Time</button><button value="v">Volts</button><button value="tv">Both</button></span></div>
+        <div class="row" id="cur-trace-row"><label>Volts on</label><span class="seg" data-for="cur-trace"><button value="a">A</button><button value="b">B</button><button value="m">M</button></span></div>
+        <div class="row"><label>Persistence</label><span class="seg" data-for="persist"><button value="off">Off</button><button value="short">Short</button><button value="long">Long</button><button value="inf">∞</button></span></div>
+        <div class="row"><label for="math-op">Math</label><select id="math-op"><option value="off">Off</option><option value="a+b">A + B</option><option value="a-b">A − B</option><option value="b-a">B − A</option><option value="a*b">A × B</option></select></div>
+        <div class="row" id="math-vdiv-row"><label for="math-vdiv">Math scale</label><select id="math-vdiv"></select></div>
+        <div class="row"><label title="Channel A across, B up; 0 V at the centre of the screen"><input type="checkbox" id="xy-on"> XY mode</label></div>
       </fieldset>
 
       <fieldset>

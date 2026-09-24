@@ -14,7 +14,7 @@
 #include "gen.h"
 #include "fwupdate.h"
 
-#define FW_VERSION "0.6.0+" BUILD_ID
+#define FW_VERSION "0.7.0+" BUILD_ID
 #define ESCAPE_HOLD_MS 2000
 #define BOOT_OK_MS     5000
 

@@ -47,30 +47,53 @@ uint8_t scope_range_count(void)
 
 int scope_running(void) { return st != S_IDLE; }
 
+// Programs the analog front end. Interleaved, ADC B samples channel A: SYS routes it there for
+// the range one past the last (QuadPawn's ADC_OTHER_CHANNEL), and B's coupling and offset
+// follow A's so both ADCs see the same signal.
+static void apply_channels(void)
+{
+  const struct scope_channel *a = &scope.ch[0], *b = scope.interleave ? &scope.ch[0] : &scope.ch[1];
+  __Set(SYS_CH_A_COUPLE, a->coupling);
+  __Set(SYS_CH_A_RANGE, a->range);
+  __Set(SYS_CH_A_OFFSET, a->offset);
+  __Set(SYS_CH_B_COUPLE, b->coupling);
+  __Set(SYS_CH_B_RANGE, scope.interleave ? scope_range_count() : b->range);
+  __Set(SYS_CH_B_OFFSET, b->offset);
+}
+
 int scope_set_channel(uint8_t ch, uint8_t range, uint8_t coupling, uint8_t offset)
 {
   if (ch > 1 || range >= scope_range_count() || coupling > 1) return -1;
   scope.ch[ch] = (struct scope_channel){ range, coupling, offset };
-  __Set(ch ? SYS_CH_B_COUPLE : SYS_CH_A_COUPLE, coupling);
-  __Set(ch ? SYS_CH_B_RANGE : SYS_CH_A_RANGE, range);
-  __Set(ch ? SYS_CH_B_OFFSET : SYS_CH_A_OFFSET, offset);
+  apply_channels();
   rearm();
   return 0;
 }
 
 int scope_set_rate(uint32_t hz)
 {
-  if (hz < 1 || hz > TIMER_HZ / 2) return -1;
+  if (hz < 1 || hz > 2 * SCOPE_MAX_RATE) return -1;
+  // Above 36 MS/s: both ADCs at 36 MS/s on alternate edges of the clock, on channel A.
+  uint8_t il = hz > SCOPE_MAX_RATE;
+  if (il != scope.interleave) {
+    scope.interleave = il;
+    // Both are needed: with ADC_MODE alone ADC B samples on the same edges as A (measured: B
+    // repeats A one word late). The control register shifts it by half a clock.
+    __Set(SYS_ADC_MODE, il);
+    __Set_Param(FPGA_SP_CTRLREG, il ? 3 : 1);
+    apply_channels();
+  }
+  if (il) hz = SCOPE_MAX_RATE;
   // Prescaler only when ARR alone can't reach the rate (same approach as QuadPawn).
   uint32_t psc = (TIMER_HZ / 65536) / hz;
   uint32_t arr = (TIMER_HZ / (psc + 1) + hz - 1) / hz - 1;
   if (arr < 1) arr = 1;  // 36 MS/s max in separate (non-interleaved) mode
   if (arr > 65535) arr = 65535;
-  scope.rate_req = hz;
+  scope.rate_req = il ? 2 * SCOPE_MAX_RATE : hz;
   scope.psc = (uint16_t)psc;
   scope.arr = (uint16_t)arr;
   uint32_t div = (psc + 1) * (arr + 1);
-  scope.rate_actual = (TIMER_HZ + div / 2) / div;
+  scope.rate_actual = ((TIMER_HZ + div / 2) / div) << il;
   __Set(SYS_T_BASE_PSC, psc);
   __Set(SYS_T_BASE_ARR, arr);
   rearm();
@@ -99,7 +122,7 @@ int scope_set_trigger(uint8_t source, uint8_t kind, uint8_t level, uint16_t widt
 
 int scope_set_acq(uint8_t mode, uint16_t auto_ms)
 {
-  if (mode > ACQ_ROLL) return -1;
+  if (mode > ACQ_ROLL || (mode == ACQ_ROLL && scope.interleave)) return -1;
   scope.acq_mode = mode;
   scope.auto_ms = auto_ms ? auto_ms : 100;
   st = mode == ACQ_STOP ? S_IDLE : S_ARM;
@@ -118,6 +141,7 @@ void scope_init(void)
   __Set(SYS_ADC_CTRL, 1);
   __Set(SYS_STANDBY, 0);
   __Set(SYS_ADC_MODE, 0);  // separate channels
+  __Set_Param(FPGA_SP_CTRLREG, 1);
 
   scope.backlight = 50;
   scope.beep = 0;
@@ -200,7 +224,7 @@ const struct scope_frame *scope_poll(uint32_t now)
 
     GPIOC->BRR = 1u << 5;  // park the FPGA FIFO select line (as QuadPawn does after reads)
     frame.frame_no = scope.frames;
-    frame.flags = forced ? FRAME_AUTO : FRAME_TRIGGERED;
+    frame.flags = (forced ? FRAME_AUTO : FRAME_TRIGGERED) | (scope.interleave ? FRAME_INTERLEAVED : 0);
     if (scope.acq_mode == ACQ_SINGLE) frame.flags |= FRAME_LAST;
     frame.rate_actual = scope.rate_actual;
     frame.ch[0] = scope.ch[0];

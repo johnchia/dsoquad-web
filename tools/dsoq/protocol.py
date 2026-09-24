@@ -131,6 +131,15 @@ class Frame:
 
     triggered = property(lambda s: bool(s.flags & 1))
     auto = property(lambda s: bool(s.flags & 2))
+    interleaved = property(lambda s: bool(s.flags & 0x20))
+
+    def channel_a(self):
+        """Channel A samples: interleaved frames merge both ADCs (B byte first in time, shifted
+        by the difference of the means; see docs/protocol.md), others return `a`."""
+        if not self.interleaved:
+            return list(self.a)
+        d = (sum(self.a[4:]) - sum(self.b[4:])) / max(1, len(self.a) - 4)
+        return [v for pair in zip((x + d for x in self.b), self.a) for v in pair]
 
     @classmethod
     def parse(cls, body: bytes):

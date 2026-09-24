@@ -19,7 +19,12 @@ export const TRIG_KINDS = ['falling', 'rising', 'low', 'high', 'low<w', 'low>w',
 export const ADC_ZERO = 54;       // SYS convention: code 54 = screen bottom
 export const CODES_PER_DIV = 25;
 export const TIMER_HZ = 72e6;
-export const MAX_RATE = 36e6;
+export const MAX_RATE = 36e6;         // per ADC; interleaved (channel A only) doubles it
+export const IL_RATE = 72e6;
+export const FRAME_INTERLEAVED = 0x20;
+// Interleaved frames: ADC B's sample of each word comes first in time (measured on HW 2.6 with
+// FPGA 2.61: B falls between the previous word's A and this word's A).
+export const IL_B_FIRST = true;
 export const GEN_OFF = 0, GEN_SQUARE = 1, GEN_ANALOG = 2;
 export const WAVE_MAX = 512, DAC_MAX_RATE = 2e6;     // separate-channel mode (interleave is M4)
 export const APP_BASE = 0x0800C000, APP_LIMIT = 0x0801C000;  // APP1, up to the APP3 fallback
@@ -176,13 +181,33 @@ export function parseFrame(b) {
   const a = new Uint8Array(count), bb = new Uint8Array(count), cd = new Uint8Array(count);
   for (let i = 0, o = 22; i < count; i++, o += 3) { a[i] = b[o]; bb[i] = b[o + 1]; cd[i] = b[o + 2]; }
   const flags = v.getUint8(4);
-  return {
+  const f = {
     frameNo: v.getUint32(0, true), flags,
     triggered: !!(flags & 1), auto: !!(flags & 2), last: !!(flags & 4), roll: !!(flags & 8), gap: !!(flags & 16),
+    interleaved: false,
     rate: v.getUint32(5, true), ch: readChannels(v, 9),
     trigSource: v.getUint8(15), trigKind: v.getUint8(16), trigLevel: v.getUint8(17),
-    pretrigger: v.getUint16(18, true), count, a, b: bb, cd,
+    pretrigger: v.getUint16(18, true), count, stale: STALE_SAMPLES, a, b: bb, cd,
   };
+  return flags & FRAME_INTERLEAVED ? deinterleave(f) : f;
+}
+
+/** Interleaved frame: each word holds two samples of channel A, one per ADC, half a clock
+ * apart. Merges them into one channel A at the combined rate. The two ADCs have their own zero
+ * error; ADC B is shifted by the difference of the means (both sample the same signal). */
+function deinterleave(f) {
+  const n = f.count, s = f.stale;
+  let sa = 0, sb = 0;
+  for (let i = s; i < n; i++) { sa += f.a[i]; sb += f.b[i]; }
+  const d = n > s ? (sa - sb) / (n - s) : 0;
+  const a = new Float32Array(2 * n), cd = new Uint8Array(2 * n);
+  const [first, second] = IL_B_FIRST ? [f.b, f.a] : [f.a, f.b];
+  const [d1, d2] = IL_B_FIRST ? [d, 0] : [0, d];
+  for (let i = 0; i < n; i++) {
+    a[2 * i] = first[i] + d1; a[2 * i + 1] = second[i] + d2;
+    cd[2 * i] = cd[2 * i + 1] = f.cd[i];
+  }
+  return { ...f, interleaved: true, ilBalance: d, count: 2 * n, pretrigger: 2 * f.pretrigger, stale: 2 * s, a, b: null, cd };
 }
 
 const cstr = (b) => {
@@ -245,6 +270,7 @@ export const body = {
 
 /** Actual sample rate the firmware will pick for a requested rate (mirrors scope_set_rate). */
 export function actualRate(hz) {
+  if (hz > MAX_RATE) return IL_RATE;
   const psc = Math.floor(Math.floor(TIMER_HZ / 65536) / hz);
   let arr = Math.floor((Math.floor(TIMER_HZ / (psc + 1)) + hz - 1) / hz) - 1;
   arr = Math.min(Math.max(arr, 1), 65535);

@@ -208,3 +208,11 @@ dialog footer .spacer { flex: 1; }
   aside { width: auto; padding: 0 10px 20px; }
   .stats { margin-left: 0; }
 }
+
+.save { display: flex; gap: 6px; }
+.save button { padding: 3px 9px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chips button { padding: 2px 8px; font-size: 12px; border-radius: 12px; }
+.chips button.active { background: #1d3557; border-color: var(--accent); color: var(--text); }
+.measure .ch-m b { color: #ff7eb6; }
+.measure .ch-cursor b { color: #e6edf3; }
