@@ -241,11 +241,11 @@ Additional host-only commands, because nothing is set on the device:
 - [ ] Optional WebUSB landing-page descriptor ("open app" popup). Low value now: the page reconnects by itself once a port is granted.
 - [x] ~~Software entry into DFU~~ superseded by the firmware update over USB (fw 0.6, §3.7).
 - *(Dropped: composite CDC + MSC. The USB disk isn't needed while connected.)*
-- [ ] Dedicated pid.codes PID (currently the pid.codes **test** PID 1209:0001, which isn't meant for distribution).
+- [ ] ~~Dedicated pid.codes PID~~ deferred (owner, 2026-09-24): keep the pid.codes test PID 1209:0001 for now.
 - [x] udev rule (`tools/udev`), install guide (`docs/install.md`), GitHub Pages deploy with the firmware published alongside (`web/firmware`).
 - [x] CI builds the firmware (size and flash-range checks) and checks that the published build matches the source version.
 - [x] Narrow screens: below 1000 px the page stacks scope, controls and panels and scrolls. Help link in the header.
-- [ ] Release: tag v1.0.0 with the `.hex` (one build covers HW 2.6–2.72 with SYS ≥ 1.51; the fallback can't be redistributed, so it stays build-from-source).
+- [x] Release: tag v1.0.0 with the `.hex` (one build covers HW 2.6–2.72 with SYS ≥ 1.51; the fallback can't be redistributed, so it stays build-from-source).
 - [ ] Owner checks: Windows (and macOS if available) with Chrome/Edge; M3's exit criterion also names Windows.
 
 **Rough total:** 4–6 weeks part-time to a solid v1. M1 either confirms the approach within the first week or triggers the libopencm3 or bare-metal fallback.

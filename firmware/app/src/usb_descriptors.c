@@ -3,7 +3,7 @@
 #include "sys.h"
 
 #define USB_VID 0x1209  // pid.codes
-#define USB_PID 0x0001  // pid.codes test PID; replace before public release
+#define USB_PID 0x0001  // pid.codes test PID (kept by the owner: personal-use project)
 #define USB_BCD 0x0200
 
 static const tusb_desc_device_t desc_device = {
