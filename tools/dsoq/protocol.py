@@ -154,7 +154,7 @@ def parse_table(body: bytes):
 
 
 def _s(b: bytes) -> str:
-    return b.split(b'\x00')[0].decode('latin1').strip()
+    return b.split(b'\x00')[0].decode('latin1').replace('!', '').strip()
 
 
 def parse_store(blob: bytes) -> dict:
