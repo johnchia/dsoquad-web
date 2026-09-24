@@ -198,7 +198,8 @@ async function connect(transport) {
       toast(info.fw === fwExpected || !fwExpected ? `Firmware updated: ${info.fw}` : `Firmware is ${info.fw}, expected ${fwExpected}`, info.fw === fwExpected || !fwExpected ? 'info' : undefined);
       fwExpected = null;
     }
-    bundledFirmware().then((m) => { $('firmware').textContent = m && devFw && m.fw !== devFw ? 'Update firmware…' : 'Firmware…'; });
+    const serial = transport instanceof SerialTransport;
+    bundledFirmware().then((m) => { $('firmware').textContent = serial && m && m.fw !== devFw ? 'Update firmware…' : 'Firmware…'; });
     $('dev-serial').textContent = info.serial;
     if (info.proto !== 1) toast(`Device speaks protocol v${info.proto}; this page expects v1`);
     const t = await d.tables();
@@ -667,6 +668,10 @@ function syncControls() {
   const rate = P.actualRate(sampleRate()), want = SAMPLES_PER_DIV / s.tdiv;
   $('rate-note').textContent = rate > P.MAX_RATE ? `${fmtSI(rate, 'S/s')}: both ADCs on channel A`
     : want > P.MAX_RATE && needB() ? `${fmtSI(rate, 'S/s')}; 72 MS/s with B, math and XY off` : `${fmtSI(rate, 'S/s')}`;
+  const dot = (tab, on) => document.querySelector(`#dock .tabs button[data-tab="${tab}"]`).classList.toggle('on', on);
+  dot('display', s.cursors.mode !== 'off' || s.persist !== 'off' || s.math.op !== 'off' || s.xy);
+  dot('gen', s.gen.shape !== 'off');
+  dot('fft', s.fft.on);
   $('backlight').value = s.backlight;
   $('backlight-out').textContent = s.backlight ? `${s.backlight}%` : 'off';
 
@@ -691,7 +696,23 @@ function syncControls() {
   updateReadouts();
 }
 
+// Dock under the scope: one panel open at a time; clicking the open tab hides it.
+const DOCK_KEY = 'dsoq.dock';
+function showDock(tab) {
+  document.querySelectorAll('#dock .tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('#dock .panel').forEach((p) => { p.hidden = p.dataset.panel !== tab; });
+  try { localStorage.setItem(DOCK_KEY, tab); } catch { /* storage unavailable */ }
+}
+
 function bind() {
+  document.querySelector('#dock .tabs').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (b) showDock(b.classList.contains('active') ? '' : b.dataset.tab);
+  };
+  let tab = 'measure';
+  try { tab = localStorage.getItem(DOCK_KEY) ?? tab; } catch { /* default */ }
+  showDock(tab);
+
   ['a', 'b'].forEach((p, i) => {
     // B's ADC doubles channel A's rate when B isn't needed, so B on/off can change the rate.
     $(`${p}-on`).onchange = (e) => { settings.ch[i].on = e.target.checked; changed(i ? send.rate : null); };
