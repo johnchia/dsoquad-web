@@ -212,7 +212,8 @@ Also worth investigating (not required): whether the DFU bootloader can be enter
 - [x] Device panel: battery (STATE extended to 46 bytes in fw 0.3.0), backlight/LCD off, firmware/serial. *(No exit button in the web UI, per the owner. Escapes are ○ at power-on and DFU. Beeper: the firmware never beeps, so there's no control.)*
 - [x] Simulator (`?sim`) and recorded-frame playback (`?play=…`, recorded with `dsoq record`).
 - [x] Basic measurements (Vpp, Vavg, Vrms, max, min, frequency) so the MVP is usable before M4.
-- [ ] Verified with the real device in Chrome on Linux and Windows.
+- [x] Verified with the real device in Chrome on Linux (2026-09-23, fw 0.3.0, 21.2 fps; square wave on A from the generator). Owner: "very intuitive, no notes".
+- [ ] Windows check (CDC binds to usbser.sys; nothing Linux-specific in the page).
 - **Exit criterion:** the MVP works in Chrome on Linux and Windows, with frame rate ≥ 20 fps at 4K depth.
 
 **Design notes (M3):**
