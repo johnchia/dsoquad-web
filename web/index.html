@@ -34,6 +34,7 @@
   <main>
     <section class="scope">
       <canvas id="scope"></canvas>
+      <canvas id="spectrum" hidden></canvas>
       <div class="scale-bar">
         <span class="ch-a" id="scale-a">A –</span>
         <span class="ch-b" id="scale-b">B –</span>
@@ -89,9 +90,20 @@
 
       <fieldset>
         <legend>Generator (wave out)</legend>
-        <div class="row"><label>Output</label><span class="seg" data-for="gen-mode"><button value="0">Off</button><button value="1">Square</button></span></div>
+        <div class="row"><span class="seg wide" data-for="gen-shape"><button value="off">Off</button><button value="square">Square</button><button value="sine">Sine</button><button value="triangle">Tri</button><button value="ramp">Ramp</button></span></div>
         <div class="row"><label for="gen-freq">Frequency</label><input type="number" id="gen-freq" min="1" max="8000000" step="any"><span class="unit">Hz</span></div>
-        <div class="row"><label for="gen-duty">Duty</label><input type="range" id="gen-duty" min="0" max="100" step="1"><output id="gen-duty-out"></output></div>
+        <div class="row note" id="gen-actual-row"><label></label><span id="gen-actual"></span></div>
+        <div class="row" id="gen-duty-row"><label for="gen-duty">Duty</label><input type="range" id="gen-duty" min="0" max="100" step="1"><output id="gen-duty-out"></output></div>
+        <div class="row" id="gen-amp-row"><label for="gen-amp">Amplitude</label><input type="range" id="gen-amp" min="0" max="100" step="1"><output id="gen-amp-out"></output></div>
+        <div class="row" id="gen-offset-row"><label for="gen-offset">Offset</label><input type="range" id="gen-offset" min="0" max="100" step="1"><output id="gen-offset-out"></output></div>
+      </fieldset>
+
+      <fieldset>
+        <legend><label><input type="checkbox" id="fft-on"> FFT</label></legend>
+        <div class="row"><label for="fft-window">Window</label><select id="fft-window"></select></div>
+        <div class="row"><label>Scale</label><span class="seg" data-for="fft-scale"><button value="db">dBV</button><button value="lin">Linear</button></span></div>
+        <div class="row"><label for="fft-span">Span</label><select id="fft-span"></select></div>
+        <div class="row"><label for="fft-avg">Average</label><select id="fft-avg"><option value="1">Off</option><option value="4">4</option><option value="16">16</option><option value="64">64</option></select></div>
       </fieldset>
 
       <fieldset>

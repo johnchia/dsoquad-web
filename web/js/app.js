@@ -6,6 +6,9 @@ import { PlaybackTransport, SerialTransport, SimTransport } from './transport.js
 import { COLORS, HDIV, ScopeView, fmtSI } from './view.js';
 import * as Cal from './calibration.js';
 import { openCalDialog } from './cal-ui.js';
+import * as Gen from './wavegen.js';
+import { WINDOWS, peak as fftPeak, spectrum } from './fft.js';
+import { SpectrumView } from './spectrum.js';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -25,7 +28,8 @@ const DEFAULTS = {
   trig: { source: 0, kind: 1, levelDiv: 0.5, widthUs: 10 },
   mode: 'auto',
   running: true,
-  gen: { mode: 0, freq: 1000, duty: 50 },
+  gen: { shape: 'off', freq: 1000, duty: 50, amp: 100, offset: 50 },
+  fft: { on: false, window: 'hann', scale: 'db', span: 1, avg: 1 },
   backlight: 50,
 };
 
@@ -117,7 +121,17 @@ const send = {
     live()?.setTrigger(t.source, t.kind, trigLevelCode(), trigWidthSamples()).catch(report);
   },
   acq() { if (!singleArmed) live()?.setAcq(acqMode(), autoMs()).catch(report); },
-  gen() { const g = settings.gen; live()?.setGen(g.mode, g.freq, g.duty).catch(report); },
+  gen() {
+    const g = settings.gen, d = live();
+    if (!d) return;
+    if (g.shape === 'off' || g.shape === 'square') {
+      d.setGen(g.shape === 'off' ? P.GEN_OFF : P.GEN_SQUARE, g.freq, g.duty).catch(report);
+      return;
+    }
+    const plan = Gen.planPoints(g.freq);
+    if (!plan) { toast(`Analog output goes up to ${fmtSI(Gen.MAX_ANALOG_HZ, 'Hz')}`); return; }
+    d.setGenWave(Gen.table(g.shape, plan.n, g.amp / 100, g.offset / 100), g.freq).catch(report);
+  },
   system() { live()?.setSystem(settings.backlight, 255).catch(report); },
   all() { send.channel(0); send.channel(1); send.rate(); send.gen(); send.system(); },
 };
@@ -229,8 +243,38 @@ async function pollState() {
 
 // ------------------------------------------------------------------ frames
 
+// ------------------------------------------------------------------ FFT
+
+let fftAvg = [null, null], fftKey = '', fftTraces = [];
+
+function fftReset() { fftAvg = [null, null]; fftTraces = []; spectrumView.invalidate(); }
+
+/** Spectrum of each shown channel, power-averaged over settings.fft.avg frames. */
+function updateSpectrum(f) {
+  const s = settings.fft;
+  const key = `${f.rate}/${f.ch.map((c) => `${c.range}.${c.coupling}`).join()}/${s.window}/${s.avg}`;
+  if (key !== fftKey) { fftKey = key; fftAvg = [null, null]; }
+  fftTraces = [];
+  [[f.a, 0], [f.b, 1]].forEach(([codes, i]) => {
+    if (!settings.ch[i].on) return;
+    const { zero, cpd } = frameScale(i, f.ch[i]);
+    const k = (ranges[f.ch[i].range] ?? 1) / cpd;
+    const x = new Float64Array(codes.length - P.STALE_SAMPLES);
+    for (let j = 0; j < x.length; j++) x[j] = (codes[j + P.STALE_SAMPLES] - zero) * k;
+    const sp = spectrum(x, s.window);
+    let acc = fftAvg[i];
+    if (!acc || acc.length !== sp.rms.length) acc = fftAvg[i] = Float64Array.from(sp.rms, (v) => v * v);
+    else { const a = 1 / s.avg; for (let j = 0; j < acc.length; j++) acc[j] += (sp.rms[j] ** 2 - acc[j]) * a; }
+    const rms = Float64Array.from(acc, Math.sqrt);
+    const binHz = sp.binHz(f.rate);
+    fftTraces.push({ name: 'AB'[i], color: COLORS[i ? 'b' : 'a'], rms, binHz, peak: fftPeak(rms) });
+  });
+  spectrumView.invalidate();
+}
+
 function onFrame(f) {
   lastFrame = f;
+  if (settings.fft.on) updateSpectrum(f);
   lastFrameAt = performance.now();
   frameTimes.push(lastFrameAt);
   while (frameTimes.length && frameTimes[0] < lastFrameAt - 2000) frameTimes.shift();
@@ -297,6 +341,7 @@ function updateReadouts() {
   const out = $('measure');
   out.replaceChildren();
   if (!f) return;
+  const peaks = new Map(fftTraces.map((t) => [t.name, t]));
   [['A', f.a, 0], ['B', f.b, 1]].forEach(([name, codes, i]) => {
     if (!settings.ch[i].on) return;
     const { zero, cpd } = frameScale(i, f.ch[i]);
@@ -307,6 +352,8 @@ function updateReadouts() {
       `<b>${name}</b>`, `Vpp ${fmtSI(m.pp, 'V')}`, `Vavg ${fmtSI(m.mean, 'V')}`, `Vrms ${fmtSI(m.rms, 'V')}`,
       `Max ${fmtSI(m.max, 'V')}`, `Min ${fmtSI(m.min, 'V')}`, `Freq ${Number.isFinite(m.freq) ? fmtSI(m.freq, 'Hz', 5) : '--'}`,
     ];
+    const t = settings.fft.on && peaks.get(name);
+    if (t) parts.push(`FFT peak ${fmtSI(t.peak.bin * t.binHz, 'Hz', 4)} ${(20 * Math.log10(Math.max(t.peak.rms, 1e-9))).toFixed(1)} dBV`);
     if (m.clipped) parts.push('<span style="color:var(--err)">clipped</span>');
     div.innerHTML = parts.map((p) => `<span>${p}</span>`).join('');
     out.append(div);
@@ -339,6 +386,19 @@ const view = new ScopeView($('scope'), () => ({
   }
 });
 
+const spectrumView = new SpectrumView($('spectrum'), () => {
+  if (!fftTraces.length) return null;
+  const vmax = Math.max(...settings.ch.map((c, i) => (c.on ? ranges[c.range] ?? 1 : 0)));
+  const fsRms = 4 * vmax / Math.SQRT2;   // full-screen sine
+  return {
+    traces: fftTraces,
+    span: P.actualRate(sampleRate()) / 2 * settings.fft.span,
+    scale: settings.fft.scale,
+    refDb: Math.ceil(20 * Math.log10(fsRms) / 10) * 10,
+    linMax: fsRms,
+  };
+});
+
 // ------------------------------------------------------------------ controls
 
 function fillRangeSelects() {
@@ -348,12 +408,30 @@ function fillRangeSelects() {
   }
 }
 
+function fillFftSelects() {
+  $('fft-window').replaceChildren(...Object.entries(WINDOWS).map(([k, w]) => new Option(w.label, k)));
+  $('fft-span').replaceChildren(...[1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01].map((v) => new Option(String(v), v)));
+}
+
+/** What the generator actually outputs (integer timer dividers), for the panel. */
+function genActualText() {
+  const g = settings.gen;
+  if (g.shape === 'off') return '';
+  if (g.shape === 'square') {
+    const psc = Math.floor(Math.floor(P.TIMER_HZ / 65536) / g.freq);
+    const arr = Math.max(1, Math.floor((Math.floor(P.TIMER_HZ / (psc + 1)) + Math.floor(g.freq / 2)) / g.freq) - 1);
+    return `actual ${fmtSI(P.TIMER_HZ / ((psc + 1) * (arr + 1)), 'Hz', 6)}`;
+  }
+  const plan = Gen.planPoints(g.freq);
+  return plan ? `actual ${fmtSI(plan.actual, 'Hz', 6)} · ${plan.n} points/period` : `max ${fmtSI(Gen.MAX_ANALOG_HZ, 'Hz')} for analog shapes`;
+}
+
 function fillTdiv() {
   $('tdiv').replaceChildren(...TDIVS.map((t) => new Option(fmtSI(t, 's'), t)));
 }
 
 function segSet(name, value) {
-  document.querySelectorAll(`.seg[data-for="${name}"] button`).forEach((b) => b.classList.toggle('active', +b.value === value));
+  document.querySelectorAll(`.seg[data-for="${name}"] button`).forEach((b) => b.classList.toggle('active', b.value === String(value)));
 }
 
 function syncControls() {
@@ -386,10 +464,29 @@ function syncControls() {
   const kindName = $('trig-kind').selectedOptions[0]?.textContent ?? '';
   $('scale-trig').textContent = `T ${'ABCD'[t.source]} ${kindName.toLowerCase()}${t.source < 2 ? ` ${fmtSI(t.levelDiv * vdiv, 'V')}` : ''}`;
 
-  segSet('gen-mode', s.gen.mode);
-  if (document.activeElement !== $('gen-freq')) $('gen-freq').value = s.gen.freq;
-  $('gen-duty').value = s.gen.duty;
-  $('gen-duty-out').textContent = `${s.gen.duty}%`;
+  const g = s.gen, analog = g.shape !== 'off' && g.shape !== 'square';
+  segSet('gen-shape', g.shape);
+  if (document.activeElement !== $('gen-freq')) $('gen-freq').value = g.freq;
+  $('gen-freq').max = analog ? Gen.MAX_ANALOG_HZ : 8e6;
+  $('gen-duty-row').hidden = g.shape !== 'square';
+  $('gen-amp-row').hidden = $('gen-offset-row').hidden = !analog;
+  $('gen-duty').value = g.duty;
+  $('gen-duty-out').textContent = `${g.duty}%`;
+  $('gen-amp').value = g.amp;
+  $('gen-amp-out').textContent = `${g.amp}%`;
+  $('gen-offset').value = g.offset;
+  $('gen-offset-out').textContent = `${g.offset}%`;
+  $('gen-actual').textContent = genActualText();
+
+  const f = s.fft;
+  $('fft-on').checked = f.on;
+  $('spectrum').hidden = !f.on;
+  $('fft-window').value = f.window;
+  segSet('fft-scale', f.scale);
+  const nyq = P.actualRate(sampleRate()) / 2;
+  [...$('fft-span').options].forEach((o) => { o.textContent = `${fmtSI(nyq * +o.value, 'Hz', 3)}${+o.value === 1 ? ' (full)' : ''}`; });
+  $('fft-span').value = f.span;
+  $('fft-avg').value = f.avg;
   $('backlight').value = s.backlight;
   $('backlight-out').textContent = s.backlight ? `${s.backlight}%` : 'off';
 
@@ -426,8 +523,14 @@ function bind() {
   $('trig-level').oninput = (e) => { settings.trig.levelDiv = +e.target.value; changed(send.trigger); };
   $('trig-width').onchange = (e) => { settings.trig.widthUs = Math.max(0, +e.target.value || 0); changed(send.trigger); };
   $('trig-mode').onchange = (e) => { settings.mode = e.target.value; changed(send.acq); };
-  $('gen-freq').onchange = (e) => { settings.gen.freq = clamp(Math.round(+e.target.value || 1000), 1, 8e6); changed(send.gen); };
+  $('gen-freq').onchange = (e) => { settings.gen.freq = clamp(Math.round(+e.target.value || 1000), 1, +e.target.max); changed(send.gen); };
   $('gen-duty').oninput = (e) => { settings.gen.duty = +e.target.value; changed(send.gen); };
+  $('gen-amp').oninput = (e) => { settings.gen.amp = +e.target.value; changed(send.gen); };
+  $('gen-offset').oninput = (e) => { settings.gen.offset = +e.target.value; changed(send.gen); };
+  $('fft-on').onchange = (e) => { settings.fft.on = e.target.checked; fftReset(); changed(); };
+  $('fft-window').onchange = (e) => { settings.fft.window = e.target.value; fftReset(); changed(); };
+  $('fft-span').onchange = (e) => { settings.fft.span = +e.target.value; changed(); };
+  $('fft-avg').onchange = (e) => { settings.fft.avg = +e.target.value; fftReset(); changed(); };
   $('backlight').oninput = (e) => { settings.backlight = +e.target.value; changed(send.system); };
 
   document.querySelectorAll('.seg').forEach((seg) => seg.addEventListener('click', (e) => {
@@ -436,7 +539,12 @@ function bind() {
     const v = +b.value, name = seg.dataset.for;
     if (name === 'a-coupling' || name === 'b-coupling') { const i = name[0] === 'a' ? 0 : 1; settings.ch[i].coupling = v; changed(() => send.channel(i)); }
     if (name === 'trig-source') { settings.trig.source = v; changed(send.trigger); }
-    if (name === 'gen-mode') { settings.gen.mode = v; changed(send.gen); }
+    if (name === 'gen-shape') {
+      settings.gen.shape = b.value;
+      if (b.value !== 'off' && b.value !== 'square' && settings.gen.freq > Gen.MAX_ANALOG_HZ) settings.gen.freq = Gen.MAX_ANALOG_HZ;
+      changed(send.gen);
+    }
+    if (name === 'fft-scale') { settings.fft.scale = b.value; changed(); }
   }));
 
   $('run').onclick = toggleRun;
@@ -542,6 +650,7 @@ function fmtDuration(s) {
 
 fillRangeSelects();
 fillTdiv();
+fillFftSelects();
 bind();
 syncControls();
 document.documentElement.style.setProperty('--a', COLORS.a);

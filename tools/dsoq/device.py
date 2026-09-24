@@ -5,7 +5,7 @@ import struct
 
 import serial_asyncio_fast
 
-from protocol import (ACK, ACK_NAMES, FRAME, GET_STATE, GET_TABLES, HELLO, INFO, LOG, PARAM_SET, PING,
+from protocol import (MEM_DATA, PEEK, POKE, SET_WAVE, ACK, ACK_NAMES, FRAME, GET_STATE, GET_TABLES, HELLO, INFO, LOG, PARAM_SET, PING,
                       PONG, REBOOT, REG_GET, REG_SET, REG_VALUE, SET_ACQ, SET_CHANNEL, SET_GEN,
                       SET_SYSTEM, SET_TIMEBASE, SET_TRIGGER, STATE, STORE_DATA, STORE_READ, STORE_WRITE, TABLE, Frame, State, decode,
                       encode, parse_table)
@@ -140,6 +140,17 @@ class Device:
 
     async def param_set(self, addr, value):
         await self.command(PARAM_SET, bytes([addr, value]))
+
+    async def set_wave(self, codes):
+        await self.command(SET_WAVE, struct.pack(f'<{len(codes)}H', *codes))
+
+    async def peek(self, addr, words=1):
+        (mt, b), = await self.request(PEEK, struct.pack('<IB', addr, words))
+        assert mt == MEM_DATA, hex(mt)
+        return list(struct.unpack_from(f'<{words}I', b, 4))
+
+    async def poke(self, addr, value):
+        await self.command(POKE, struct.pack('<II', addr, value))
 
     async def store_read(self):
         (mt, b), = await self.request(STORE_READ)

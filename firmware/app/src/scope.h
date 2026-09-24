@@ -6,7 +6,6 @@
 #define SCOPE_PRETRIGGER 150   // samples the FPGA keeps before the trigger point
 
 enum { ACQ_STOP = 0, ACQ_NORMAL = 1, ACQ_AUTO = 2, ACQ_SINGLE = 3 };
-enum { GEN_OFF = 0, GEN_SQUARE = 1 };
 
 #define FRAME_TRIGGERED 0x01
 #define FRAME_AUTO      0x02
@@ -50,7 +49,6 @@ int scope_set_channel(uint8_t ch, uint8_t range, uint8_t coupling, uint8_t offse
 int scope_set_rate(uint32_t hz);
 int scope_set_trigger(uint8_t source, uint8_t kind, uint8_t level, uint16_t width);
 int scope_set_acq(uint8_t mode, uint16_t auto_ms);
-int scope_set_gen(uint8_t mode, uint32_t freq_hz, uint8_t duty);
 void scope_set_system(uint8_t backlight, uint8_t beep);
 
 // Advance the capture state machine; returns a finished frame (valid until

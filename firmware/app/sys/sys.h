@@ -21,6 +21,9 @@
 #define SYS_CH_A_RANGE   10
 #define SYS_CH_B_COUPLE  11
 #define SYS_CH_B_RANGE   12
+#define SYS_ANALOG_ARR   13  // DAC table timer (TIM7); unused: gen.c drives TIM7 directly
+#define SYS_ANALOG_PTR   14
+#define SYS_ANALOG_CNT   15
 #define SYS_DIGTAL_PSC   16  // square-wave output (TIM4)
 #define SYS_DIGTAL_ARR   17
 #define SYS_DIGTAL_CCR   18

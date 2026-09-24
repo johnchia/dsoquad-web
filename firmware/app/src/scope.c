@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include "scope.h"
+#include "gen.h"
 #include "stm32f1xx.h"
 #include "sys.h"
 
@@ -94,24 +95,6 @@ int scope_set_acq(uint8_t mode, uint16_t auto_ms)
   return 0;
 }
 
-int scope_set_gen(uint8_t mode, uint32_t freq_hz, uint8_t duty)
-{
-  if (mode > GEN_SQUARE || duty > 100) return -1;
-  if (mode == GEN_SQUARE && (freq_hz < 1 || freq_hz > 8000000)) return -1;
-  if (freq_hz == 0) freq_hz = 1000;
-  uint32_t psc = (TIMER_HZ / 65536) / freq_hz;
-  uint32_t arr = (TIMER_HZ / (psc + 1) + freq_hz / 2) / freq_hz - 1;
-  if (arr < 1) arr = 1;
-  scope.gen_mode = mode;
-  scope.gen_freq = freq_hz;
-  scope.gen_duty = duty;
-  __Set(SYS_DIGTAL_PSC, psc);
-  __Set(SYS_DIGTAL_ARR, arr);
-  // The output is inverted: CCR = ARR+1 holds it idle (as the stock app does for "off").
-  __Set(SYS_DIGTAL_CCR, mode == GEN_OFF ? arr + 1 : ((arr + 1) * (100u - duty)) / 100u);
-  return 0;
-}
-
 void scope_set_system(uint8_t backlight, uint8_t beep)
 {
   if (backlight <= 100) { scope.backlight = backlight; __Set(SYS_BACKLIGHT, backlight); }
@@ -134,7 +117,7 @@ void scope_init(void)
   scope_set_channel(1, mid_range, 0, ADC_ZERO + 100);
   scope_set_rate(1000000);
   scope_set_trigger(0, 1, ADC_ZERO + 100, 0);
-  scope_set_gen(GEN_OFF, 1000, 50);
+  gen_set(GEN_OFF, 1000, 50);
   scope_set_acq(ACQ_STOP, 100);
 }
 

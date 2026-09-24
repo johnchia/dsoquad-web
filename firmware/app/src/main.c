@@ -11,8 +11,9 @@
 #include "proto.h"
 #include "scope.h"
 #include "store.h"
+#include "gen.h"
 
-#define FW_VERSION "0.4.0-m4+" BUILD_ID
+#define FW_VERSION "0.5.0-m4+" BUILD_ID
 #define ESCAPE_HOLD_MS 2000
 #define BOOT_OK_MS     5000
 
@@ -92,10 +93,10 @@ void USBWakeUp_IRQHandler(void) { tud_int_handler(0); }
 enum {
   MSG_HELLO = 0x01, MSG_PING = 0x02, MSG_GET_STATE = 0x03,
   MSG_SET_CHANNEL = 0x10, MSG_SET_TIMEBASE = 0x11, MSG_SET_TRIGGER = 0x12, MSG_SET_ACQ = 0x13,
-  MSG_SET_GEN = 0x14, MSG_SET_SYSTEM = 0x15, MSG_GET_TABLES = 0x20, MSG_STORE_READ = 0x21, MSG_STORE_WRITE = 0x22,
-  MSG_REG_SET = 0x30, MSG_REG_GET = 0x31, MSG_PARAM_SET = 0x32, MSG_REBOOT = 0x3F,
+  MSG_SET_GEN = 0x14, MSG_SET_SYSTEM = 0x15, MSG_SET_WAVE = 0x16, MSG_GET_TABLES = 0x20, MSG_STORE_READ = 0x21, MSG_STORE_WRITE = 0x22,
+  MSG_REG_SET = 0x30, MSG_REG_GET = 0x31, MSG_PARAM_SET = 0x32, MSG_PEEK = 0x33, MSG_POKE = 0x34, MSG_REBOOT = 0x3F,
   MSG_INFO = 0x81, MSG_PONG = 0x82, MSG_STATE = 0x83, MSG_FRAME = 0x84, MSG_TABLE = 0x85, MSG_STORE_DATA = 0x86,
-  MSG_LOG = 0x8E, MSG_ACK = 0xA0, MSG_REG_VALUE = 0xB1,
+  MSG_LOG = 0x8E, MSG_ACK = 0xA0, MSG_REG_VALUE = 0xB1, MSG_MEM_DATA = 0xB3,
 };
 enum { ACK_OK, ACK_BAD_LENGTH, ACK_BAD_VALUE, ACK_UNKNOWN_TYPE, ACK_BAD_FRAME, ACK_BUSY, ACK_FLASH_ERROR };
 
@@ -172,6 +173,9 @@ static void send_state(uint8_t seq)
   proto_tx_u16(&tx, (uint16_t)__Get(SYS_V_BATTERY));
   proto_tx_u8(&tx, (uint8_t)__Get(SYS_CHARGE));
   proto_tx_u32(&tx, ms / 1000);
+  proto_tx_u16(&tx, gen_psc);
+  proto_tx_u16(&tx, gen_arr);
+  proto_tx_u16(&tx, gen_wave_len());
   msg_end();
 }
 
@@ -233,7 +237,8 @@ static void handle_msg(const uint8_t *m, size_t len)
   case MSG_SET_TIMEBASE: NEED(4); RESULT(scope_set_rate(get_u32(b))); break;
   case MSG_SET_TRIGGER: NEED(5); RESULT(scope_set_trigger(b[0], b[1], b[2], get_u16(b + 3))); break;
   case MSG_SET_ACQ: NEED(3); RESULT(scope_set_acq(b[0], get_u16(b + 1))); break;
-  case MSG_SET_GEN: NEED(6); RESULT(scope_set_gen(b[0], get_u32(b + 1), b[5])); break;
+  case MSG_SET_GEN: NEED(6); RESULT(gen_set(b[0], get_u32(b + 1), b[5])); break;
+  case MSG_SET_WAVE: RESULT(gen_set_wave(b, n)); break;
   case MSG_SET_SYSTEM: NEED(2); scope_set_system(b[0], b[1]); send_ack(seq, ACK_OK); break;
   case MSG_GET_TABLES: NEED(0); send_tables(seq); send_ack(seq, ACK_OK); break;
   case MSG_STORE_READ: {
@@ -261,6 +266,22 @@ static void handle_msg(const uint8_t *m, size_t len)
     break;
   }
   case MSG_PARAM_SET: NEED(2); __Set_Param(b[0], b[1]); send_ack(seq, ACK_OK); break;
+  case MSG_PEEK: {  // debug: read 32-bit words
+    NEED(5);
+    uint32_t addr = get_u32(b), words = b[4];
+    if (addr & 3 || words == 0 || words > 64) { send_ack(seq, ACK_BAD_VALUE); break; }
+    proto_tx_begin(&tx, cdc_sink, MSG_MEM_DATA, seq);
+    proto_tx_u32(&tx, addr);
+    for (uint32_t i = 0; i < words; i++) proto_tx_u32(&tx, ((volatile uint32_t *)addr)[i]);
+    msg_end();
+    break;
+  }
+  case MSG_POKE:  // debug: write one 32-bit word
+    NEED(8);
+    if (get_u32(b) & 3) { send_ack(seq, ACK_BAD_VALUE); break; }
+    *(volatile uint32_t *)get_u32(b) = get_u32(b + 4);
+    send_ack(seq, ACK_OK);
+    break;
   case MSG_REBOOT:
     NEED(1);
     if (b[0] > 1) { send_ack(seq, ACK_BAD_VALUE); break; }

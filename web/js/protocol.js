@@ -3,12 +3,12 @@
 // Host -> device
 export const HELLO = 0x01, PING = 0x02, GET_STATE = 0x03;
 export const SET_CHANNEL = 0x10, SET_TIMEBASE = 0x11, SET_TRIGGER = 0x12, SET_ACQ = 0x13,
-  SET_GEN = 0x14, SET_SYSTEM = 0x15;
+  SET_GEN = 0x14, SET_SYSTEM = 0x15, SET_WAVE = 0x16;
 export const GET_TABLES = 0x20, STORE_READ = 0x21, STORE_WRITE = 0x22;
-export const REG_SET = 0x30, REG_GET = 0x31, PARAM_SET = 0x32, REBOOT = 0x3F;
+export const REG_SET = 0x30, REG_GET = 0x31, PARAM_SET = 0x32, PEEK = 0x33, POKE = 0x34, REBOOT = 0x3F;
 // Device -> host
 export const INFO = 0x81, PONG = 0x82, STATE = 0x83, FRAME = 0x84, TABLE = 0x85, STORE_DATA = 0x86, LOG = 0x8E,
-  ACK = 0xA0, REG_VALUE = 0xB1;
+  ACK = 0xA0, REG_VALUE = 0xB1, MEM_DATA = 0xB3;
 
 export const ACK_NAMES = ['OK', 'BAD_LENGTH', 'BAD_VALUE', 'UNKNOWN_TYPE', 'BAD_FRAME', 'BUSY', 'FLASH_ERROR'];
 export const STORE_MAX = 1024;
@@ -18,7 +18,9 @@ export const TRIG_KINDS = ['falling', 'rising', 'low', 'high', 'low<w', 'low>w',
 export const ADC_ZERO = 54;       // SYS convention: code 54 = screen bottom
 export const CODES_PER_DIV = 25;
 export const TIMER_HZ = 72e6;
-export const MAX_RATE = 36e6;     // separate-channel mode (interleave is M4)
+export const MAX_RATE = 36e6;
+export const GEN_OFF = 0, GEN_SQUARE = 1, GEN_ANALOG = 2;
+export const WAVE_MAX = 512, DAC_MAX_RATE = 2e6;     // separate-channel mode (interleave is M4)
 export const STALE_SAMPLES = 4;   // the FIFO's first few samples are left over from before the capture
 
 const CRC_TABLE = (() => {
@@ -149,12 +151,17 @@ export function parseState(b) {
     autoMs: v.getUint16(25, true),
     genMode: v.getUint8(27), genFreq: v.getUint32(28, true), genDuty: v.getUint8(32),
     backlight: v.getUint8(33), beep: v.getUint8(34), frames: v.getUint32(35, true),
-    batteryMv: null, charging: null, uptimeS: null,
+    batteryMv: null, charging: null, uptimeS: null, genPsc: null, genArr: null, waveLen: null,
   };
   if (b.length >= 46) {  // appended in firmware 0.3.0
     s.batteryMv = v.getUint16(39, true);
     s.charging = v.getUint8(41);
     s.uptimeS = v.getUint32(42, true);
+  }
+  if (b.length >= 52) {  // firmware 0.5.0
+    s.genPsc = v.getUint16(46, true);
+    s.genArr = v.getUint16(48, true);
+    s.waveLen = v.getUint16(50, true);
   }
   return s;
 }
@@ -227,6 +234,7 @@ export const body = {
   acq: (mode, autoMs = 100) => pack(3, (v) => { v.setUint8(0, mode); v.setUint16(1, autoMs, true); }),
   gen: (mode, freq, duty) => pack(6, (v) => { v.setUint8(0, mode); v.setUint32(1, Math.round(freq), true); v.setUint8(5, duty); }),
   system: (backlight = 255, beep = 255) => Uint8Array.of(backlight, beep),
+  wave: (codes) => pack(2 * codes.length, (v) => codes.forEach((c, i) => v.setUint16(2 * i, c, true))),
   reboot: (target) => Uint8Array.of(target),
 };
 

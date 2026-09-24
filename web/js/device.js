@@ -102,13 +102,16 @@ export class Device extends EventTarget {
     });
   }
 
+  /** coalesce() for a sequence of commands: `fn` runs with the device and is awaited. */
+  coalesceTask(key, fn) { return this.coalesce(key, null, fn); }
+
   async _drain(key) {
     this.inflight.add(key);
     while (this.latest.has(key)) {
       const { type, body, waiters } = this.latest.get(key);
       this.latest.delete(key);
       try {
-        await this.command(type, body);
+        if (type === null) await body(this); else await this.command(type, body);
         waiters.forEach((w) => w.resolve());
       } catch (e) {
         waiters.forEach((w) => w.reject(e));
@@ -161,6 +164,15 @@ export class Device extends EventTarget {
   setAcq(mode, autoMs) { return this.coalesce('acq', P.SET_ACQ, P.body.acq(mode, autoMs)); }
 
   setGen(mode, freq, duty) { return this.coalesce('gen', P.SET_GEN, P.body.gen(mode, freq, duty)); }
+
+  /** Analog output: uploads the DAC table, then starts it (one coalesced step, so the table
+   * always arrives before the SET_GEN that uses it). */
+  setGenWave(codes, freq) {
+    return this.coalesceTask('gen', async (d) => {
+      await d.command(P.SET_WAVE, P.body.wave(codes));
+      await d.command(P.SET_GEN, P.body.gen(P.GEN_ANALOG, freq, 50));
+    });
+  }
 
   setSystem(backlight, beep) { return this.coalesce('sys', P.SET_SYSTEM, P.body.system(backlight, beep)); }
 }

@@ -40,7 +40,8 @@ The firmware deals only in raw hardware values; calibration and physical units l
 | `0x11` | SET_TIMEBASE | `rate_hz u32` | `ACK` (read `STATE` for the actual rate) |
 | `0x12` | SET_TRIGGER | `source u8` (0 A, 1 B, 2 C, 3 D), `kind u8` (0–7, see below), `level u8` (ADC code), `width u16` (pulse-width threshold, samples) | `ACK` |
 | `0x13` | SET_ACQ | `mode u8` (0 stop, 1 normal, 2 auto, 3 single), `auto_ms u16` | `ACK` |
-| `0x14` | SET_GEN | `mode u8` (0 off, 1 square), `freq_hz u32`, `duty u8` (%) | `ACK` |
+| `0x14` | SET_GEN | `mode u8` (0 off, 1 square, 2 analog), `freq_hz u32`, `duty u8` (% for square) | `ACK` |
+| `0x16` | SET_WAVE | 2–512 × `u16` DAC codes (0–4095) | `ACK` |
 | `0x15` | SET_SYSTEM | `backlight u8` (0–100), `beep u8` (0–100); 255 = unchanged | `ACK` |
 | `0x20` | GET_TABLES | – | 4 × `TABLE`, then `ACK` |
 | `0x21` | STORE_READ | – | `STORE_DATA` |
@@ -48,6 +49,8 @@ The firmware deals only in raw hardware values; calibration and physical units l
 | `0x30` | REG_SET | `object u8`, `value u32` (`__Set`) | `ACK` |
 | `0x31` | REG_GET | `kind u8` (`__Get`) | `REG_VALUE` |
 | `0x32` | PARAM_SET | `addr u8`, `value u8` (`__Set_Param`, FPGA trigger block) | `ACK` |
+| `0x33` | PEEK | `addr u32` (word aligned), `words u8` (1–64). Debug | `MEM_DATA` |
+| `0x34` | POKE | `addr u32` (word aligned), `value u32`. Debug: writes anywhere | `ACK` |
 | `0x3F` | REBOOT | `target u8` (0 this firmware, 1 APP3 fallback) | `ACK`, then USB drops |
 
 Trigger kinds (FPGA): 0 falling edge, 1 rising edge, 2 low level, 3 high level,
@@ -70,8 +73,9 @@ sends one triggered frame, then switches to stop.
 | `0x8E` | LOG | text (not NUL-terminated) |
 | `0xA0` | ACK | `status u8` (0 OK, 1 BAD_LENGTH, 2 BAD_VALUE, 3 UNKNOWN_TYPE, 4 BAD_FRAME, 5 BUSY, 6 FLASH_ERROR) |
 | `0xB1` | REG_VALUE | `kind u8`, `value u32` |
+| `0xB3` | MEM_DATA | `addr u32`, `words × u32` |
 
-### STATE (46 bytes)
+### STATE (52 bytes)
 
 | Offset | Field |
 |---|---|
@@ -84,6 +88,10 @@ sends one triggered frame, then switches to stop.
 | 33 | `backlight u8`, `beep u8` |
 | 35 | `frames u32` (frames sent since boot) |
 | 39 | `battery_mv u16`, `charging u8` (SYS `CHARGE`, 1 = charging), `uptime_s u32` |
+| 46 | generator `psc u16`, `arr u16` (timer dividers in use), `wave_len u16` (DAC table entries) |
+
+The generator's actual frequency is `72 MHz / ((psc + 1)(arr + 1))` for the square wave and
+that divided by `wave_len` in analog mode.
 
 Receivers must accept a longer `STATE` and ignore the extra bytes, so fields can be appended
 without a protocol version bump. (Firmware before 0.3.0 sent only the first 39 bytes.)
@@ -127,3 +135,11 @@ verifies. The host owns the format:
   and channel B ranges 0–7: `a f32`, `b f32`, `gain f32`, `flags u8` (bit 0 zero calibrated,
   bit 1 gain calibrated). 0 V reads as code `a + b × offset_register`; a division is
   `25 × gain` codes.
+
+## Wave generator (firmware ≥ 0.5.0)
+
+- **Square** (`mode 1`): TIM4 through SYS, 1 Hz – 8 MHz, `duty` in %. Full logic swing.
+- **Analog** (`mode 2`): the DAC (12-bit) plays the table from `SET_WAVE` in a loop,
+  `freq_hz` times per second, via DMA2 channel 4 paced by TIM7. `freq_hz × wave_len` must be
+  ≤ 2 MS/s, so hosts shorten the table for high frequencies. Upload the table first;
+  `SET_WAVE` while running switches tables at once. The host computes every waveform.

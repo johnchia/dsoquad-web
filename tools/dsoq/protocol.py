@@ -5,11 +5,12 @@ from dataclasses import dataclass
 
 # Host -> device
 HELLO, PING, GET_STATE = 0x01, 0x02, 0x03
-SET_CHANNEL, SET_TIMEBASE, SET_TRIGGER, SET_ACQ, SET_GEN, SET_SYSTEM = 0x10, 0x11, 0x12, 0x13, 0x14, 0x15
+SET_CHANNEL, SET_TIMEBASE, SET_TRIGGER, SET_ACQ, SET_GEN, SET_SYSTEM, SET_WAVE = 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16
 GET_TABLES, STORE_READ, STORE_WRITE = 0x20, 0x21, 0x22
-REG_SET, REG_GET, PARAM_SET, REBOOT = 0x30, 0x31, 0x32, 0x3F
+REG_SET, REG_GET, PARAM_SET, PEEK, POKE, REBOOT = 0x30, 0x31, 0x32, 0x33, 0x34, 0x3F
 # Device -> host
 INFO, PONG, STATE, FRAME, TABLE, STORE_DATA, LOG, ACK, REG_VALUE = 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x8E, 0xA0, 0xB1
+MEM_DATA = 0xB3
 
 ACK_NAMES = ['OK', 'BAD_LENGTH', 'BAD_VALUE', 'UNKNOWN_TYPE', 'BAD_FRAME', 'BUSY', 'FLASH_ERROR']
 ACQ_STOP, ACQ_NORMAL, ACQ_AUTO, ACQ_SINGLE = range(4)
@@ -97,11 +98,15 @@ class State:
     battery_mv: int = 0
     charging: int = 0
     uptime_s: int = 0
+    gen_psc: int = 0
+    gen_arr: int = 0
+    wave_len: int = 0
 
     @classmethod
     def parse(cls, b: bytes):
         f = struct.unpack_from('<BB6BIIHHBBBHHBIBBBI', b)
         extra = struct.unpack_from('<HBI', b, 39) if len(b) >= 46 else ()
+        extra += struct.unpack_from('<HHH', b, 46) if len(b) >= 52 else ()
         ch = [Channel(*f[2:5]), Channel(*f[5:8])]
         return cls(f[0], bool(f[1]), ch, *f[8:], *extra)
 

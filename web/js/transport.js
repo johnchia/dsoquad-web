@@ -129,7 +129,16 @@ class VirtualTransport {
         this.ack(seq);
         break;
       case P.SET_ACQ: s.acqMode = b[0]; s.autoMs = v.getUint16(1, true) || 100; this.armedAt = performance.now(); this.ack(seq); break;
-      case P.SET_GEN: Object.assign(s, { genMode: b[0], genFreq: v.getUint32(1, true), genDuty: b[5] }); this.ack(seq); break;
+      case P.SET_GEN:
+        if (b[0] === P.GEN_ANALOG && !(this.wave?.length >= 2)) { this.ack(seq, 2); break; }
+        Object.assign(s, { genMode: b[0], genFreq: v.getUint32(1, true), genDuty: b[5] });
+        this.ack(seq);
+        break;
+      case P.SET_WAVE:
+        if (b.length % 2 || b.length < 4 || b.length > 2 * P.WAVE_MAX) { this.ack(seq, 2); break; }
+        this.wave = Array.from({ length: b.length / 2 }, (_, i) => v.getUint16(2 * i, true));
+        this.ack(seq);
+        break;
       case P.STORE_READ: {
         const d = this.store(), out = new Uint8Array(2 + d.length);
         out[0] = d.length & 0xFF; out[1] = d.length >> 8; out.set(d, 2);
@@ -173,7 +182,8 @@ class VirtualTransport {
   }
 
   stateBody() {
-    const s = this.state, b = new Uint8Array(46), v = new DataView(b.buffer);
+    const s = this.state, b = new Uint8Array(52), v = new DataView(b.buffer);
+    v.setUint16(50, this.wave?.length ?? 0, true);
     v.setUint8(0, s.acqMode); v.setUint8(1, s.acqMode ? 1 : 0);
     s.ch.forEach((c, i) => { b[2 + 3 * i] = c.range; b[3 + 3 * i] = c.coupling; b[4 + 3 * i] = c.offset; });
     v.setUint32(8, s.rateReq, true); v.setUint32(12, s.rateActual, true);
@@ -217,6 +227,7 @@ class VirtualTransport {
 
 /** Real table bodies captured from the target unit (SYS 1.52), so the simulator matches it. */
 const RANGE_V = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10];
+const SIM_DAC_VFS = 2.5;   // simulated wave-out voltage at DAC code 4095
 function simTables() {
   const g = new Uint8Array(3 + 28);
   g.set([0, 28, 1]);
@@ -248,6 +259,10 @@ export class SimTransport extends VirtualTransport {
   voltsA(t) {
     const s = this.state;
     if (this.inputsOpen) return 0;
+    if (s.genMode === P.GEN_ANALOG) {
+      const w = this.wave, p = (t * s.genFreq) % 1;
+      return w[Math.floor(p * w.length)] / 4095 * SIM_DAC_VFS;
+    }
     if (s.genMode) {
       const p = (t * s.genFreq) % 1;
       return p < s.genDuty / 100 ? 3.0 : 0.0;
