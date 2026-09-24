@@ -1,0 +1,10 @@
+# DSO Quad (DS203) access for users in the plugdev group.
+# Install: sudo cp 70-dsoquad.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
+
+# Normal-mode USB disk and DFU disk (STM32 mass storage, 0483:5720): raw block access
+# for backups and DFU flashing, and keep the desktop from auto-mounting it.
+SUBSYSTEM=="block", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5720", MODE="0660", GROUP="plugdev", ENV{UDISKS_IGNORE}="1"
+
+# Our web-control firmware (CDC-ACM, pid.codes test ID 1209:0001): serial access,
+# and stop ModemManager from probing the port.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", MODE="0660", GROUP="plugdev", ENV{ID_MM_DEVICE_IGNORE}="1"

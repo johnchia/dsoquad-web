@@ -1,0 +1,7 @@
+ref/
+build/
+*.o
+*.elf
+node_modules/
+dist/
+tools/bin/
