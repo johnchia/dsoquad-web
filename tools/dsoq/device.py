@@ -32,6 +32,7 @@ class Device:
         self._seq = 0
         self._pending = {}      # seq -> (future, collected messages)
         self._task = None
+        self.raw_log = None     # file object: every byte received is appended (for `record`)
 
     async def open(self, port=None):
         self.reader, self.writer = await serial_asyncio_fast.open_serial_connection(
@@ -50,6 +51,8 @@ class Device:
     async def _read_loop(self):
         while True:
             chunk = await self.reader.readuntil(b'\x00')
+            if self.raw_log:
+                self.raw_log.write(chunk)
             if len(chunk) <= 1:
                 continue
             try:

@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DSO Quad Web</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header>
+    <h1>DSO Quad</h1>
+    <div class="conn">
+      <button id="connect" class="primary">Connect</button>
+      <select id="source" title="Where frames come from">
+        <option value="usb">USB device</option>
+        <option value="sim">Simulator</option>
+        <option value="file">Playback file…</option>
+      </select>
+      <input type="file" id="playback-file" accept=".dsoq" hidden>
+      <span id="conn-status" class="status">Disconnected</span>
+    </div>
+    <div class="acq">
+      <button id="run" title="Run / stop (Space)">Run</button>
+      <button id="single" title="Single capture (S)">Single</button>
+      <select id="trig-mode" title="Trigger mode">
+        <option value="auto">Auto</option>
+        <option value="normal">Normal</option>
+      </select>
+      <span id="trig-status" class="badge">Stop</span>
+    </div>
+    <div class="stats"><span id="fps">– fps</span> · <span id="frame-no">frame –</span> · <span id="rate">– S/s</span></div>
+  </header>
+
+  <main>
+    <section class="scope">
+      <canvas id="scope"></canvas>
+      <div class="scale-bar">
+        <span class="ch-a" id="scale-a">A –</span>
+        <span class="ch-b" id="scale-b">B –</span>
+        <span id="scale-t">–/div</span>
+        <span class="trig" id="scale-trig">T –</span>
+      </div>
+      <div class="measure" id="measure"></div>
+    </section>
+
+    <aside id="panel">
+      <fieldset class="ch-a">
+        <legend><label><input type="checkbox" id="a-on" checked> Channel A</label></legend>
+        <div class="row"><label for="a-range">V/div</label><select id="a-range"></select></div>
+        <div class="row"><label>Coupling</label><span class="seg" data-for="a-coupling"><button value="0">DC</button><button value="1">AC</button></span></div>
+        <div class="row"><label for="a-pos">Position</label><input type="range" id="a-pos" min="0" max="8" step="0.04"><output id="a-pos-out"></output></div>
+      </fieldset>
+
+      <fieldset class="ch-b">
+        <legend><label><input type="checkbox" id="b-on" checked> Channel B</label></legend>
+        <div class="row"><label for="b-range">V/div</label><select id="b-range"></select></div>
+        <div class="row"><label>Coupling</label><span class="seg" data-for="b-coupling"><button value="0">DC</button><button value="1">AC</button></span></div>
+        <div class="row"><label for="b-pos">Position</label><input type="range" id="b-pos" min="0" max="8" step="0.04"><output id="b-pos-out"></output></div>
+      </fieldset>
+
+      <fieldset class="ch-d">
+        <legend><label><input type="checkbox" id="dig-on"> Digital C / D</label></legend>
+      </fieldset>
+
+      <fieldset>
+        <legend>Horizontal</legend>
+        <div class="row"><label for="tdiv">Time/div</label><select id="tdiv"></select></div>
+        <div class="row"><label for="tpos">Trigger at</label><input type="range" id="tpos" min="0" max="10" step="0.05"><output id="tpos-out"></output></div>
+      </fieldset>
+
+      <fieldset class="trig">
+        <legend>Trigger</legend>
+        <div class="row"><label>Source</label><span class="seg" data-for="trig-source"><button value="0">A</button><button value="1">B</button><button value="2">C</button><button value="3">D</button></span></div>
+        <div class="row"><label for="trig-kind">Type</label>
+          <select id="trig-kind">
+            <option value="1">Rising edge</option>
+            <option value="0">Falling edge</option>
+            <option value="3">High level</option>
+            <option value="2">Low level</option>
+            <option value="7">High pulse &gt; width</option>
+            <option value="6">High pulse &lt; width</option>
+            <option value="5">Low pulse &gt; width</option>
+            <option value="4">Low pulse &lt; width</option>
+          </select>
+        </div>
+        <div class="row" id="trig-level-row"><label for="trig-level">Level</label><input type="range" id="trig-level" min="-8" max="8" step="0.04"><output id="trig-level-out"></output></div>
+        <div class="row" id="trig-width-row"><label for="trig-width">Width</label><input type="number" id="trig-width" min="0" step="any"><span class="unit">µs</span></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Generator (wave out)</legend>
+        <div class="row"><label>Output</label><span class="seg" data-for="gen-mode"><button value="0">Off</button><button value="1">Square</button></span></div>
+        <div class="row"><label for="gen-freq">Frequency</label><input type="number" id="gen-freq" min="1" max="8000000" step="any"><span class="unit">Hz</span></div>
+        <div class="row"><label for="gen-duty">Duty</label><input type="range" id="gen-duty" min="0" max="100" step="1"><output id="gen-duty-out"></output></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Device</legend>
+        <dl class="info">
+          <dt>Firmware</dt><dd id="dev-fw">–</dd>
+          <dt>Serial</dt><dd id="dev-serial">–</dd>
+          <dt>Battery</dt><dd id="dev-battery">–</dd>
+          <dt>Uptime</dt><dd id="dev-uptime">–</dd>
+        </dl>
+        <div class="row"><label for="backlight">Backlight</label><input type="range" id="backlight" min="0" max="100" step="5"><output id="backlight-out"></output></div>
+        <div class="row buttons">
+          <button id="export">Export settings</button>
+          <button id="import">Import…</button>
+          <input type="file" id="import-file" accept=".json" hidden>
+          <button id="reset">Defaults</button>
+        </div>
+      </fieldset>
+    </aside>
+  </main>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

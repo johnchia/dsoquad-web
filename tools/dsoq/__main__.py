@@ -5,6 +5,7 @@
     python3 tools/dsoq capture --gen 1000 --rate 100000 --png capture.png
     python3 tools/dsoq bench --seconds 5
     python3 tools/dsoq reg get 11
+    python3 tools/dsoq record --gen 1000 --rate 200000 --seconds 3 -o web/recordings/demo.dsoq
 """
 import argparse
 import asyncio
@@ -23,6 +24,7 @@ MODES = {'auto': ACQ_AUTO, 'normal': ACQ_NORMAL, 'single': ACQ_SINGLE}
 
 
 def stats(codes, rate, offset):
+    codes = codes[4:]  # the first samples are stale FIFO contents (docs/protocol.md)
     lo, hi = min(codes), max(codes)
     mid = (lo + hi) / 2
     rising = [i for i in range(1, len(codes)) if codes[i - 1] < mid <= codes[i]]
@@ -140,6 +142,26 @@ async def cmd_bench(dev, a):
           f'bad frames {dev.bad_frames}')
 
 
+async def cmd_record(dev, a):
+    """Save the raw device->host stream (HELLO, TABLEs, STATE, then FRAMEs) for web playback."""
+    with open(a.out, 'wb') as fh:
+        dev.raw_log = fh
+        await dev.hello()
+        await dev.tables()
+        await configure(dev, a)
+        await dev.state()
+        await dev.set_acq(MODES[a.mode], a.auto_ms)
+        n, t0 = 0, time.time()
+        try:
+            while time.time() - t0 < a.seconds:
+                await dev.next_frame(timeout=a.timeout)
+                n += 1
+        finally:
+            await dev.set_acq(ACQ_STOP)
+            dev.raw_log = None
+    print(f'recorded {n} frames, {os.path.getsize(a.out) / 1024:.0f} KB -> {a.out}')
+
+
 async def cmd_gen(dev, a):
     await dev.set_gen(1 if a.freq > 0 else 0, a.freq or 1000, a.duty)
     print(await dev.state())
@@ -191,6 +213,10 @@ def main():
     b = sub.add_parser('bench')
     acq_args(b)
     b.add_argument('--seconds', type=float, default=5)
+    rec = sub.add_parser('record')
+    acq_args(rec)
+    rec.add_argument('--seconds', type=float, default=3)
+    rec.add_argument('-o', '--out', required=True)
     g = sub.add_parser('gen')
     g.add_argument('freq', type=float, help='Hz, 0 = off')
     g.add_argument('--duty', type=int, default=50)

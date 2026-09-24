@@ -68,7 +68,7 @@ sends one triggered frame, then switches to stop.
 | `0xA0` | ACK | `status u8` (0 OK, 1 BAD_LENGTH, 2 BAD_VALUE, 3 UNKNOWN_TYPE, 4 BAD_FRAME, 5 BUSY) |
 | `0xB1` | REG_VALUE | `kind u8`, `value u32` |
 
-### STATE (39 bytes)
+### STATE (46 bytes)
 
 | Offset | Field |
 |---|---|
@@ -80,6 +80,10 @@ sends one triggered frame, then switches to stop.
 | 27 | gen `mode u8`, `freq_hz u32`, `duty u8` |
 | 33 | `backlight u8`, `beep u8` |
 | 35 | `frames u32` (frames sent since boot) |
+| 39 | `battery_mv u16`, `charging u8` (SYS `CHARGE`, 1 = charging), `uptime_s u32` |
+
+Receivers must accept a longer `STATE` and ignore the extra bytes, so fields can be appended
+without a protocol version bump. (Firmware before 0.3.0 sent only the first 39 bytes.)
 
 ### FRAME
 
@@ -95,6 +99,8 @@ sends one triggered frame, then switches to stop.
 | 22 | `count × 3` bytes: per sample `A u8`, `B u8`, `CD u8` (bit0 = C, bit1 = D) |
 
 Samples are raw codes, with the FPGA 2.61 channel-B bit-swap already corrected.
+The first 1–4 samples of a frame are stale (left in the FPGA FIFO from before the capture);
+hosts should ignore samples 0–3.
 
 ### TABLE ids (raw SYS structures, little-endian)
 

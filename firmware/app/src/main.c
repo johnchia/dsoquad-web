@@ -11,7 +11,7 @@
 #include "proto.h"
 #include "scope.h"
 
-#define FW_VERSION "0.2.1-m2+" BUILD_ID
+#define FW_VERSION "0.3.0-m3+" BUILD_ID
 #define ESCAPE_HOLD_MS 2000
 #define BOOT_OK_MS     5000
 
@@ -168,6 +168,9 @@ static void send_state(uint8_t seq)
   proto_tx_u8(&tx, scope.backlight);
   proto_tx_u8(&tx, scope.beep);
   proto_tx_u32(&tx, scope.frames);
+  proto_tx_u16(&tx, (uint16_t)__Get(SYS_V_BATTERY));
+  proto_tx_u8(&tx, (uint8_t)__Get(SYS_CHARGE));
+  proto_tx_u32(&tx, ms / 1000);
   msg_end();
 }
 

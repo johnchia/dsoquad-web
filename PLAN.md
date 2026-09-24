@@ -205,13 +205,20 @@ Also worth investigating (not required): whether the DFU bootloader can be enter
 - **DFU flashing, findings (2026-09-23):** a plain FAT copy (`mcopy`, the default in `tools/dfu-flash.sh`) programs correctly, as proven twice by the running firmware (the frame rate went from 15.6 to 21.8 fps after flashing the perf build), **but the DFU names the file `.ERR` anyway**. The one real failure (SYS version screen + tone) came from gabonator's raw `dfuload`, which writes a synthetic directory entry; that method is now opt-in only (`DFU_METHOD=dfuload`). DFU 3.10 shows nothing on the LCD. Suspected cause of the spurious `.ERR`: objcopy's type-05 (start address) record, which the Makefile now strips. **Next flash:** check whether it reports `.RDY`. Every build now carries an ID (`python3 tools/dsoq info`, also on the LCD), so a flash can always be verified after boot.
 
 ### M3: Web app MVP (4–6 days)
-- [ ] Connect/disconnect through Web Serial with auto-reconnect via `navigator.serial.getPorts()`.
-- [ ] Waveform canvas with graticule; CH A/B plus digital C/D traces.
-- [ ] Controls: run/stop/single/auto, V/div and coupling per channel, position/offset, time/div, trigger source/edge/level/position (draggable markers).
-- [ ] Settings persisted in the browser and pushed on connect; resync via `GET_STATE` after a page reload.
-- [ ] Device panel: battery level, backlight/LCD off, beeper mute, firmware/HW info. *(No exit button in the web UI, per the owner. Escapes are ○ at power-on and DFU.)*
-- [ ] Mock transport and recorded-frame playback for offline development.
+- [x] Connect/disconnect through Web Serial with auto-reconnect via `navigator.serial.getPorts()` and the `connect` event.
+- [x] Waveform canvas with graticule; CH A/B plus digital C/D traces; min/max decimation; hover readout.
+- [x] Controls: run/stop/single/auto/normal, V/div and coupling per channel, position/offset, time/div, trigger source/type/level/position/pulse width (draggable markers), generator.
+- [x] Settings persisted in the browser and pushed on connect; export/import as JSON. `GET_STATE` is polled once a second (battery, uptime, self-heal if the device stopped).
+- [x] Device panel: battery (STATE extended to 46 bytes in fw 0.3.0), backlight/LCD off, firmware/serial. *(No exit button in the web UI, per the owner. Escapes are ○ at power-on and DFU. Beeper: the firmware never beeps, so there's no control.)*
+- [x] Simulator (`?sim`) and recorded-frame playback (`?play=…`, recorded with `dsoq record`).
+- [x] Basic measurements (Vpp, Vavg, Vrms, max, min, frequency) so the MVP is usable before M4.
+- [ ] Verified with the real device in Chrome on Linux and Windows.
 - **Exit criterion:** the MVP works in Chrome on Linux and Windows, with frame rate ≥ 20 fps at 4K depth.
+
+**Design notes (M3):**
+- Time/div → sample rate = min(36 MS/s, 200 samples/div), so a screen uses 2000 of the 4096 samples and the rest is room to move the trigger point. Slow timebases wait for the whole 4096-sample capture (e.g. 2 s at 100 ms/div); roll mode is M4.
+- Frames captured at an old channel offset are shifted to the current position on screen, so dragging a channel zero feels immediate, even while stopped.
+- The first 1–4 samples of every frame are stale FIFO contents (found in the recordings: they added a fake edge and a 1.4% frequency error). Hosts skip samples 0–3.
 
 ### M4: Scope features (1–2 weeks, incremental)
 - [ ] Measurements: Vpp, Vrms, mean, freq, period, duty, rise/fall. Cursors (ΔT, ΔV).

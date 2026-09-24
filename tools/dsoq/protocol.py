@@ -94,12 +94,16 @@ class State:
     backlight: int
     beep: int
     frames: int
+    battery_mv: int = 0
+    charging: int = 0
+    uptime_s: int = 0
 
     @classmethod
     def parse(cls, b: bytes):
-        f = struct.unpack('<BB6BIIHHBBBHHBIBBBI', b)
+        f = struct.unpack_from('<BB6BIIHHBBBHHBIBBBI', b)
+        extra = struct.unpack_from('<HBI', b, 39) if len(b) >= 46 else ()
         ch = [Channel(*f[2:5]), Channel(*f[5:8])]
-        return cls(f[0], bool(f[1]), ch, *f[8:])
+        return cls(f[0], bool(f[1]), ch, *f[8:], *extra)
 
 
 @dataclass
