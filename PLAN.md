@@ -248,10 +248,118 @@ Additional host-only commands, because nothing is set on the device:
 - [x] Release: tag v1.0.0 with the `.hex` (one build covers HW 2.6–2.72 with SYS ≥ 1.51; the fallback can't be redistributed, so it stays build-from-source).
 - [ ] Owner checks: Windows (and macOS if available) with Chrome/Edge; M3's exit criterion also names Windows.
 
+### M6: Frequency-response and impedance analyzer (1–2 weeks)
+
+**Goal:** use the generator and both channels as a swept-sine analyzer, a Bode plotter for
+amplifiers, filters and other two-port circuits, and an impedance meter for loudspeaker drivers
+with Thiele-Small parameters. Distortion is out of scope beyond a rough indication: the 8-bit
+ADC (THD floor about 0.3–1 %) and the generator (1.7 % THD measured) can flag clipping but can't
+grade a hi-fi amplifier.
+
+**Why it works on this hardware**
+- Channel A measures the input of the device under test (DUT) and B its output. The result is
+  the complex ratio B/A per frequency, so the generator's own level and flatness cancel.
+- The generator and the sampling clock share the 72 MHz crystal, and `STATE` reports the
+  generator's exact dividers (psc, arr, table length). Each capture can be planned to hold an
+  exact whole number of cycles, so a single-bin DFT gives amplitude and phase with no leakage
+  and no window.
+- The generator gives clean sines from about 1 Hz up to about 100 kHz (at least 16 points per
+  cycle, table ≤ 512 points) at up to 2.7 Vpp. Captures run up to 36 MS/s, with 50 mV–10 V/div
+  input ranges.
+- **No firmware change is needed.** Everything uses `SET_WAVE`, `SET_GEN`, `SET_TIMEBASE`,
+  `SET_CHANNEL`, free-running captures (trigger kind 3 at level 0, as calibration does) and
+  `STATE`.
+
+**Measurement core** (`web/js/analyzer/`, pure modules tested under node)
+- **Sweep planner:** log-spaced frequencies (e.g. 10 per decade, rounded to whole Hz as
+  `SET_GEN` takes), or a single frequency / level sweep. Per point it picks a table length (as
+  `planPoints` does), then a capture rate whose divider makes samples per cycle
+  = (generator divider × table length) / capture divider a whole number. It takes as many whole
+  cycles as fit in the 4088 usable samples, with ≥ 8 samples per cycle and ≥ 2 cycles. Below
+  about 5 Hz a capture is long: the planner reports sweep time up front.
+- **Detector:** DFT at the fundamental over the whole-cycle record, per channel, in calibrated
+  volts. H = B/A (gain, phase). Harmonics 2–5 for an indicative THD, marked with the floor.
+- **Settling:** after each frequency change, discard captures for max(3 periods, 50 ms, a
+  user-set settle time, e.g. longer for high-Q speakers and amps with big coupling caps).
+  Repeat a point when two readings disagree by more than a threshold (DUT still settling or
+  noise).
+- **Auto-ranging:** per point and channel, pick the V/div that puts the peak-to-peak at 4–7 div
+  and centre it with the offset. Clipping (codes 0/255) forces a re-measure one range up.
+  Averaging: N captures per point (default 1; 4–16 for low-level signals).
+- **Channel match:** a loopback sweep with both probes on the generator output records the A/B
+  gain and phase mismatch per frequency, including the skew between the two ADCs (not measured
+  yet in separate mode). Every later result is divided by it. It's stored on the DSO as a new
+  store record (tag 2, beside calibration's tag 1; 64 points × gain f32 + phase f32 ≈ 520 bytes,
+  within the 1024-byte store) and re-used until the user repeats it.
+
+**Modes**
+1. **Frequency response:** gain in dB (or V/V) and phase against log frequency. Readouts:
+   passband gain, −3 dB points, peak and its frequency, phase at chosen points; a reference trace
+   (a stored earlier sweep) for comparisons.
+2. **Impedance / loudspeaker:** generator → series resistor R (known, user-entered; 10–100 Ω,
+   ideally measured with a multimeter) → driver to ground. A at the generator side of R, B across
+   the driver. Z = R·B/(A−B), shown as |Z| and phase.
+   - The generator only goes positive (a sine sits on ~1.35 V DC). The wiring diagram shows a
+     bipolar coupling capacitor (≥ 1000 µF) in series so the cone isn't pushed off-centre, or an
+     option to accept the DC.
+   - **Re:** DC from two constant-level tables (a table of equal codes is a DC output): the
+     difference of the two readings cancels the offsets. Falls back to the lowest-frequency |Z|.
+   - **fs, Zmax:** the |Z| peak (phase zero crossing, interpolated). **Qms, Qes, Qts:** from
+     r0 = Zmax/Re and the two frequencies where |Z| = √r0·Re (Qms = fs·√r0/(f2−f1),
+     Qes = Qms/(r0−1), Qts = Qms·Qes/(Qms+Qes)). **Le:** from the high-frequency |Z| slope
+     (plain inductor first; a semi-inductance model later).
+   - **Vas:** a second sweep with a known added mass m (Mms = m / ((fs/fs′)² − 1),
+     Cms = 1/((2π·fs)²·Mms)) or in a sealed box of known volume (from the new fc and Qec). Needs
+     the cone area Sd from the user (the diameter).
+   - Test level: the generator drives a few mA into R plus the driver, which suits small-signal
+     Thiele-Small measurement. An external amplifier plus a current shunt is the documented
+     option for louder testing.
+3. **Amplifier extras:**
+   - **Level sweep** at a fixed frequency: gain against input level; the clipping onset where the
+     gain drops or the harmonics rise.
+   - **Output impedance / damping factor:** two sweeps, open circuit and into a load resistor RL:
+     Zout = RL·(Vopen/Vload − 1).
+   - **Slew rate:** a square wave from the generator, measured with the existing rise/fall
+     measurement at a fast timebase.
+
+**UI**
+- An **Analyzer** view in the same page, switched from the header. It shares the Web Serial
+  connection (a port can only be open in one page), and the scope is suspended while it runs, as
+  calibration does. The code lives in its own modules.
+- Per mode, a wiring diagram (inline SVG) that shows where each probe goes, the setup fields (R,
+  settle time, sweep range and points, level, averaging) and Start/Stop with progress.
+- Plots: log-f magnitude and phase (or |Z| and phase) with a hover readout and markers for the
+  derived values. A results table (Thiele-Small parameters or −3 dB points) with units and the
+  inputs used.
+- Export: CSV of the sweep (f, A, B, H or Z, phase, harmonics), PNG of the plots; runs kept in
+  the browser for the reference trace.
+
+**Simulator:** a simulated DUT: channel B = the generator through an RC low-pass, an RLC
+band-pass, or a loudspeaker model (Re, Le, and a parallel RLC motional branch for given
+fs/Qms/Qes) behind a series R, with a small A/B skew and gain mismatch to exercise the channel
+match. This lets the whole analyzer run and be tested without hardware.
+
+**Steps**
+- [ ] M6.1 Hardware facts first (quick scripts with `tools/dsoq`): A/B skew and gain match in separate mode with both probes on one signal; the generator's output impedance (open against a known load); the sine's purity versus table length; the settling after a frequency change.
+- [ ] M6.2 Core modules plus node tests: sweep planner (coherence guaranteed, sweep-time estimate), detector (single-bin DFT, harmonics), impedance maths, Thiele-Small fit. The tests check against a synthetic speaker with known parameters to < 1 %, and an RC filter against its formula.
+- [ ] M6.3 Simulator DUTs, then the Analyzer view: frequency-response mode end to end in the simulator (sweep, auto-range, settle, plot, CSV).
+- [ ] M6.4 Channel-match loopback, stored on the DSO (store tag 2); impedance mode with Re, fs, the Qs and Le; wiring diagrams.
+- [ ] M6.5 Vas (added mass / sealed box), amplifier level sweep and output impedance, reference traces, PNG export. Docs: `docs/analyzer.md` with the wiring and the limits.
+- [ ] M6.6 Hardware verification (owner): an RC low-pass (e.g. 1 kΩ + 100 nF, fc = 1.59 kHz) within ±0.2 dB and ±2° of theory from 20 Hz to 20 kHz; a resistor as "impedance" flat within 1 %; a real driver against its datasheet (fs within a few %; Qts within about 10 %, since datasheets are loose); an amplifier's gain and response.
+
+**Exit criterion:** the RC filter and the resistor pass M6.6, and a driver measurement
+gives plausible Thiele-Small parameters with the wiring shown in the page.
+
+**Defaults taken (change if you prefer):** in-app view rather than a separate page or Python
+script; channel match stored on the DSO; small-signal speaker measurement straight from the
+generator (external amplifier optional).
+**Needed from the owner for M6.6:** an RC or other known filter, a resistor for R (10–100 Ω, 1 %),
+a large bipolar capacitor, a driver with a datasheet, and any amplifier to try.
+
 ### Next release (1.0.1)
 - [x] Status screen (in source, not yet released): shows the □ + ○ exit hint only when an app is installed in APP3; otherwise it points at the page's Firmware… button for updates and DFU (▶/|| at power-on) for recovery. Release: bump `FW_VERSION`, commit, `make -C firmware/app release`, push, tag.
 
-**Rough total:** 4–6 weeks part-time to a solid v1. M1 either confirms the approach within the first week or triggers the libopencm3 or bare-metal fallback.
+**Rough total:** 4–6 weeks part-time to a solid v1 (M0–M5), plus 1–2 weeks for the analyzer (M6). M1 either confirms the approach within the first week or triggers the libopencm3 or bare-metal fallback.
 
 ---
 
