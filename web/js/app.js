@@ -282,11 +282,18 @@ function updateSpectrum(f) {
 // ------------------------------------------------------------------ roll mode
 
 const ROLL_CAP = 8192;
+const ROLL_JUNK = 150;
 let roll = null;   // {a, b, cd, n, next, key, rate, chunks, gaps}
 
 /** Appends a roll chunk and shows the newest screenful as a frame (newest sample at the right). */
 function onRoll(c) {
   if (!settings.running || !rolling()) return;   // a chunk still in flight after a change
+  if (c.frameNo < ROLL_JUNK) {
+    // Firmware 0.5.0 up to b21a47f sends the capture's 146 unfilled pretrigger samples first.
+    const k = Math.min(c.count, ROLL_JUNK - c.frameNo);
+    c = { ...c, frameNo: c.frameNo + k, count: c.count - k, a: c.a.subarray(k), b: c.b.subarray(k), cd: c.cd.subarray(k) };
+    if (!c.count) return;
+  }
   const key = `${c.rate}/${c.ch.map((x) => `${x.range}.${x.coupling}.${x.offset}`).join()}`;
   if (!roll || roll.key !== key || c.frameNo < roll.next) {
     roll = { a: new Uint8Array(ROLL_CAP), b: new Uint8Array(ROLL_CAP), cd: new Uint8Array(ROLL_CAP), n: 0, next: c.frameNo, key, rate: c.rate, chunks: 0, gaps: 0 };

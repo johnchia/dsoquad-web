@@ -29,11 +29,10 @@ static uint32_t roll_sent_at;
 static uint16_t roll_block;     // samples read since the last arm
 static uint8_t roll_gap;        // lost samples before the next chunk
 static uint16_t roll_skip;      // samples to drop at the start of the current capture
-// The first capture's first 4 samples are stale. A capture restarted when the previous one
-// filled begins with the FPGA's 150 pretrigger samples, which are exactly the last ones
-// already delivered (measured: 4 stale + 146 duplicates), so skipping 150 keeps the stream
-// continuous with no gap.
-#define ROLL_STALE 4
+// Every capture starts with the FPGA's 150 pretrigger samples, which roll mode drops. After a
+// fresh arm they were never filled (measured: 4 stale + 146 zeros); after a restart because the
+// previous capture filled, they are exactly the last samples already delivered (4 stale + 146
+// duplicates), so dropping them keeps the stream continuous with no gap.
 
 static void rearm(void)
 {
@@ -153,7 +152,7 @@ static void arm(uint32_t now)
     apply_trigger(1);
     __Set(SYS_FIFO_CLR, 1);
     roll_block = 0;
-    roll_skip = ROLL_STALE;
+    roll_skip = SCOPE_PRETRIGGER;
     armed_at = now;
     st = S_ROLL_WAIT;
     return;
