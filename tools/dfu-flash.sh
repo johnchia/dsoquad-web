@@ -10,7 +10,7 @@ hex="${1:?usage: dfu-flash.sh <image.hex>}"
 # Refuse images that would touch the bootloader, SYS or FPGA areas.
 "$here/hexrange.py" "$hex"
 
-[ -x "$here/bin/dfuload" ] || g++ -O2 -w -o "$here/bin/dfuload" "$here/../ref/LA104/tools/dfuload/dfuload.cpp"
+[ -x "$here/bin/dfuload" ] || g++ -O2 -w -o "$here/bin/dfuload" "$here/dfuload/dfuload.cpp"
 
 find_dev() {
   for d in /sys/block/sd*; do
@@ -32,14 +32,26 @@ if mdir -i "$dev" -b :: 2>/dev/null | grep -qi '\.WPT$'; then
   exit 1
 fi
 
-"$here/bin/dfuload" "$dev" cp "$hex"
+# Normal FAT copy (as an OS would do), uppercase 8.3 name, then flush to the device.
+# (gabonator's raw dfuload is kept in tools/dfuload for comparison: DFU_METHOD=dfuload.)
+if [ "${DFU_METHOD:-mtools}" = dfuload ]; then
+  "$here/bin/dfuload" "$dev" cp "$hex"
+else
+  mcopy -o -i "$dev" "$hex" ::APP.HEX
+  sync "$dev" 2>/dev/null || sync
+  echo "Copied $(stat -c %s "$hex") bytes as APP.HEX"
+fi
 
 echo "Waiting for the DSO to program the image..."
 seen_gone=0
 for _ in $(seq 1 60); do
   sleep 1
   dev="$(find_dev)" || { seen_gone=1; continue; }
-  listing="$(mdir -i "$dev" -b :: 2>/dev/null || true)"
+  # Bypass the page cache: the DFU rewrites its directory behind the kernel's back.
+  snap="$(mktemp)"
+  dd if="$dev" of="$snap" iflag=direct bs=4096 count=16 status=none 2>/dev/null || true
+  listing="$(mdir -i "$snap" -b :: 2>/dev/null || true)"
+  rm -f "$snap"
   if grep -qi '\.RDY$' <<<"$listing"; then echo "Programmed OK (.RDY). Power-cycle the DSO."; exit 0; fi
   if grep -qi '\.NOT$' <<<"$listing"; then echo "DSO rejected the image (.NOT)." >&2; exit 2; fi
 done

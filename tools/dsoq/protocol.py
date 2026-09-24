@@ -1,4 +1,5 @@
 """Codec for the DSO Quad control protocol (docs/protocol.md)."""
+import binascii
 import struct
 from dataclasses import dataclass
 
@@ -19,11 +20,8 @@ CODES_PER_DIV = 25
 
 
 def crc16(data: bytes, crc: int = 0xFFFF) -> int:
-    for b in data:
-        crc ^= b << 8
-        for _ in range(8):
-            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
-    return crc
+    """CRC-16/CCITT-FALSE (binascii.crc_hqx is the same polynomial, unreflected)."""
+    return binascii.crc_hqx(data, crc)
 
 
 def cobs_encode(data: bytes) -> bytes:

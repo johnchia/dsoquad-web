@@ -1,11 +1,20 @@
 #include "proto.h"
 
+static uint16_t crc_table[256];
+
+static void crc_init(void)
+{
+  for (int i = 0; i < 256; i++) {
+    uint16_t c = (uint16_t)(i << 8);
+    for (int b = 0; b < 8; b++) c = (c & 0x8000) ? (uint16_t)(c << 1 ^ 0x1021) : (uint16_t)(c << 1);
+    crc_table[i] = c;
+  }
+}
+
 uint16_t crc16_update(uint16_t crc, const uint8_t *p, size_t n)
 {
-  while (n--) {
-    crc ^= (uint16_t)(*p++ << 8);
-    for (int i = 0; i < 8; i++) crc = (crc & 0x8000) ? (uint16_t)(crc << 1 ^ 0x1021) : (uint16_t)(crc << 1);
-  }
+  if (!crc_table[1]) crc_init();
+  while (n--) crc = (uint16_t)(crc << 8 ^ crc_table[(crc >> 8 ^ *p++) & 0xFF]);
   return crc;
 }
 

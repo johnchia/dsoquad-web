@@ -15,15 +15,16 @@ _Static_assert(sizeof(T_attr) == 10, "T_attr layout");
 struct scope_state scope;
 static struct scope_frame frame;
 
-enum { S_IDLE, S_ARM, S_WAIT_TRIG, S_READ, S_DONE };
+enum { S_IDLE, S_ARM, S_WAIT_TRIG, S_READ };
 static uint8_t st = S_IDLE;
+static uint8_t frame_pending;  // frame buffer holds a frame the host hasn't been sent yet
 static uint8_t forced;        // auto mode gave up waiting and captured untriggered
 static uint32_t armed_at;
 static uint16_t read_idx;
 
 static void rearm(void)
 {
-  if (st != S_IDLE && st != S_DONE) st = S_ARM;
+  if (st != S_IDLE) st = S_ARM;
 }
 
 uint8_t scope_range_count(void)
@@ -89,8 +90,7 @@ int scope_set_acq(uint8_t mode, uint16_t auto_ms)
   if (mode > ACQ_SINGLE) return -1;
   scope.acq_mode = mode;
   scope.auto_ms = auto_ms ? auto_ms : 100;
-  if (mode == ACQ_STOP) st = S_IDLE;
-  else if (st != S_DONE) st = S_ARM;  // a pending frame re-arms once it has been sent
+  st = mode == ACQ_STOP ? S_IDLE : S_ARM;
   return 0;
 }
 
@@ -149,19 +149,25 @@ static void store_sample(uint16_t i, uint32_t w)
   s[2] = (uint8_t)((w >> 16) & 3);
 }
 
+static void arm(uint32_t now)
+{
+  forced = 0;
+  apply_trigger(0);
+  __Set(SYS_FIFO_CLR, 1);
+  armed_at = now;
+  st = S_WAIT_TRIG;
+}
+
 const struct scope_frame *scope_poll(uint32_t now)
 {
+  if (frame_pending) return &frame;
+
   switch (st) {
   case S_IDLE:
-  case S_DONE:
-    return st == S_DONE ? &frame : NULL;
+    return NULL;
 
   case S_ARM:
-    forced = 0;
-    apply_trigger(0);
-    __Set(SYS_FIFO_CLR, 1);
-    armed_at = now;
-    st = S_WAIT_TRIG;
+    arm(now);
     return NULL;
 
   case S_WAIT_TRIG:
@@ -197,8 +203,11 @@ const struct scope_frame *scope_poll(uint32_t now)
     frame.trig_kind = scope.trig_kind;
     frame.trig_level = scope.trig_level;
     frame.count = SCOPE_DEPTH;
-    if (forced) apply_trigger(0);
-    st = S_DONE;
+    frame_pending = 1;
+
+    // Start the next capture now: the FPGA fills its FIFO while this frame goes out over USB.
+    if (scope.acq_mode == ACQ_SINGLE) st = S_IDLE;
+    else arm(now);
     return &frame;
   }
   return NULL;
@@ -206,8 +215,8 @@ const struct scope_frame *scope_poll(uint32_t now)
 
 void scope_frame_done(void)
 {
-  if (st != S_DONE) return;
+  if (!frame_pending) return;
+  frame_pending = 0;
   scope.frames++;
   if (scope.acq_mode == ACQ_SINGLE) scope.acq_mode = ACQ_STOP;
-  st = scope.acq_mode == ACQ_STOP ? S_IDLE : S_ARM;
 }
