@@ -19,3 +19,6 @@ void escape_to_fallback(void) __attribute__((noreturn));
 void escape_reboot(void) __attribute__((noreturn));
 
 uint32_t escape_watchdog_resets(void);
+
+// An APP with a plausible vector table sits in APP3 (e.g. a Community Edition build).
+int escape_fallback_present(void);

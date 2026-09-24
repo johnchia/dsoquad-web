@@ -410,8 +410,13 @@ int main(void)
   status_line(8, C_CYN, " fw " FW_VERSION);
   status_line(1, C_WHT, " HW %s  DFU %s", version_str(__Chk_HDW()), version_str(__Chk_DFU()));
   status_line(2, C_WHT, " Clock %s", usb_clock_setup());
-  status_line(10, C_WHT, " Exit to scope: hold [] + () for 2 s");
-  status_line(11, C_WHT, " (or power on holding () for the fallback)");
+  if (escape_fallback_present()) {
+    status_line(10, C_WHT, " Exit to scope in APP3: hold [] + () for 2 s");
+    status_line(11, C_WHT, " (or power on holding ())");
+  } else {
+    status_line(10, C_WHT, " Updates: Firmware... on the web page");
+    status_line(11, C_WHT, " Recovery: power on holding >|| (DFU)");
+  }
 
   scope_init();
   usb_takeover();

@@ -248,6 +248,9 @@ Additional host-only commands, because nothing is set on the device:
 - [x] Release: tag v1.0.0 with the `.hex` (one build covers HW 2.6–2.72 with SYS ≥ 1.51; the fallback can't be redistributed, so it stays build-from-source).
 - [ ] Owner checks: Windows (and macOS if available) with Chrome/Edge; M3's exit criterion also names Windows.
 
+### Next release (1.0.1)
+- [x] Status screen (in source, not yet released): shows the □ + ○ exit hint only when an app is installed in APP3; otherwise it points at the page's Firmware… button for updates and DFU (▶/|| at power-on) for recovery. Release: bump `FW_VERSION`, commit, `make -C firmware/app release`, push, tag.
+
 **Rough total:** 4–6 weeks part-time to a solid v1. M1 either confirms the approach within the first week or triggers the libopencm3 or bare-metal fallback.
 
 ---

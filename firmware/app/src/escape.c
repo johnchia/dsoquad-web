@@ -29,7 +29,7 @@ static void __attribute__((noreturn)) jump_to_app3(void)
   for (;;) {}
 }
 
-static int app3_present(void)
+int escape_fallback_present(void)
 {
   uint32_t sp = *(volatile uint32_t *)APP3_BASE;
   uint32_t pc = *(volatile uint32_t *)(APP3_BASE + 4);
@@ -46,7 +46,7 @@ void escape_early_check(void)
   uint32_t count = by_watchdog ? BKP_WDG_RESETS + 1 : 0;
   int exit_requested = BKP_EXIT_FLAG == EXIT_MAGIC;
 
-  if ((exit_requested || count >= MAX_WDG_RESETS) && app3_present()) {
+  if ((exit_requested || count >= MAX_WDG_RESETS) && escape_fallback_present()) {
     BKP_EXIT_FLAG = 0;
     BKP_WDG_RESETS = 0;
     jump_to_app3();
