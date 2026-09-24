@@ -233,7 +233,7 @@ class VirtualTransport {
 
 /** Real table bodies captured from the target unit (SYS 1.52), so the simulator matches it. */
 const RANGE_V = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10];
-const SIM_DAC_VFS = 2.5;   // simulated wave-out voltage at DAC code 4095
+const SIM_DAC_VFS = 2.5;   // simulated wave-out span (the real unit: ~2.7 V, see wavegen.js)
 function simTables() {
   const g = new Uint8Array(3 + 28);
   g.set([0, 28, 1]);

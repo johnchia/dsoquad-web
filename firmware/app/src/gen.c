@@ -12,6 +12,10 @@
 static uint16_t wave[GEN_WAVE_MAX];
 static uint16_t wave_len;
 static uint32_t square_arr = 0xFFFF;  // TIM4 ARR last programmed
+// PB6 (TIM4_CH1, the square output) and the DAC drive the same wave-out node. PB6 idles as a
+// push-pull output that holds the node down, so in analog mode it's made an input (measured:
+// the DAC's full swing is 0.07-2.70 V that way, but only ~0.25 V with PB6 driving).
+static uint32_t pb6_cfg = 0xFFFFFFFF;  // SYS's PB6 CRL nibble, saved on first use
 uint16_t gen_psc, gen_arr;
 
 // Largest psc/arr pair for `hz` updates per second (rounded to nearest).
@@ -23,6 +27,13 @@ static void timer_div(uint32_t hz, uint32_t *psc, uint32_t *arr)
   if (a > 65536) a = 65536;
   *psc = p;
   *arr = a - 1;
+}
+
+static void pb6_float(int on)
+{
+  uint32_t crl = GPIOB->CRL;
+  if (pb6_cfg == 0xFFFFFFFF) pb6_cfg = (crl >> 24) & 0xF;
+  GPIOB->CRL = (crl & ~(0xFu << 24)) | ((on ? 0x4u : pb6_cfg) << 24);  // 0x4: floating input
 }
 
 static void analog_stop(void)
@@ -97,9 +108,11 @@ int gen_set(uint8_t mode, uint32_t freq_hz, uint8_t duty)
 
   if (mode == GEN_ANALOG) {
     square_idle();
+    pb6_float(1);
     analog_start(psc, arr);
   } else {
     analog_stop();
+    pb6_float(0);
     __Set(SYS_DIGTAL_PSC, psc);
     __Set(SYS_DIGTAL_ARR, arr);
     square_arr = arr;

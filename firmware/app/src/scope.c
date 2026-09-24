@@ -28,6 +28,11 @@ static uint32_t roll_index;     // samples delivered since roll started
 static uint32_t roll_sent_at;
 static uint16_t roll_block;     // samples read since the last arm
 static uint8_t roll_gap;        // lost samples before the next chunk
+static uint16_t roll_skip;      // samples to drop at the start of the current capture
+// The first capture's first 4 samples are stale. A capture restarted when the previous one
+// filled begins with the FPGA's 150 pretrigger samples, which are exactly the last ones
+// already delivered (measured: 4 stale + 146 duplicates), so skipping 150 keeps the stream
+// continuous with no gap.
 #define ROLL_STALE 4
 
 static void rearm(void)
@@ -148,6 +153,7 @@ static void arm(uint32_t now)
     apply_trigger(1);
     __Set(SYS_FIFO_CLR, 1);
     roll_block = 0;
+    roll_skip = ROLL_STALE;
     armed_at = now;
     st = S_ROLL_WAIT;
     return;
@@ -219,7 +225,7 @@ const struct scope_frame *scope_poll(uint32_t now)
     // read_idx counts samples staged in frame.samples for the next chunk.
     while (read_idx < ROLL_CHUNK_MAX && roll_block < SCOPE_DEPTH && !__Get(SYS_FIFO_EMPTY)) {
       uint32_t w = __Read_FIFO();
-      if (roll_block++ >= ROLL_STALE) store_sample(read_idx++, w);
+      if (roll_block++ >= roll_skip) store_sample(read_idx++, w);
     }
     int block_done = roll_block >= SCOPE_DEPTH;
     // Send about 20 chunks a second, sooner when the chunk is full, and always before re-arming.
@@ -227,12 +233,13 @@ const struct scope_frame *scope_poll(uint32_t now)
     if (due < 1) due = 1;
     if (!block_done && (read_idx == 0 || (read_idx < ROLL_CHUNK_MAX && read_idx < due && now - roll_sent_at < 50))) return NULL;
     if (block_done) {
-      // The FIFO holds SCOPE_DEPTH samples per capture: start the next one. The samples
-      // between the last read and the new capture's first good sample are lost.
+      // The FIFO holds SCOPE_DEPTH samples per capture: start the next one (it stops writing
+      // when full, so nothing is lost while we restart it).
       __Set(SYS_FIFO_CLR, 1);
       roll_block = 0;
+      roll_skip = SCOPE_PRETRIGGER;
       st = S_ROLL_WAIT;
-      if (read_idx == 0) { roll_gap = 1; return NULL; }
+      if (read_idx == 0) return NULL;
     }
     GPIOC->BRR = 1u << 5;
     frame.frame_no = roll_index;
@@ -245,7 +252,7 @@ const struct scope_frame *scope_poll(uint32_t now)
     frame.trig_level = scope.trig_level;
     frame.count = read_idx;
     roll_index += read_idx;
-    roll_gap = block_done;
+    roll_gap = 0;
     read_idx = 0;
     roll_sent_at = now;
     frame_pending = 1;

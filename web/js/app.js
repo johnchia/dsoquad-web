@@ -513,9 +513,9 @@ function syncControls() {
   $('gen-duty').value = g.duty;
   $('gen-duty-out').textContent = `${g.duty}%`;
   $('gen-amp').value = g.amp;
-  $('gen-amp-out').textContent = `${g.amp}%`;
+  $('gen-amp-out').textContent = `${(g.amp / 100 * Gen.DAC_VSPAN).toFixed(2)} Vpp`;
   $('gen-offset').value = g.offset;
-  $('gen-offset-out').textContent = `${g.offset}%`;
+  $('gen-offset-out').textContent = `${(Gen.DAC_V0 + g.offset / 100 * Gen.DAC_VSPAN).toFixed(2)} V`;
   $('gen-actual').textContent = genActualText();
 
   const f = s.fft;

@@ -8,6 +8,10 @@ export const SHAPES = {
   ramp: (x) => 2 * x - 1,
 };
 
+// Wave-out voltage at DAC code 0 and the span to code 4095 (measured on HW 2.6 with firmware
+// 0.5: 0.03-2.73 V into the scope input). Approximate: for display, not calibration.
+export const DAC_V0 = 0.04, DAC_VSPAN = 2.68;
+
 export const MIN_POINTS = 16;   // below this a "sine" is a staircase
 export const MAX_ANALOG_HZ = Math.floor(DAC_MAX_RATE / MIN_POINTS);
 

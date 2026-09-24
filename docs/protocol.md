@@ -146,11 +146,17 @@ verifies. The host owns the format:
   `freq_hz` times per second, via DMA2 channel 4 paced by TIM7. `freq_hz × wave_len` must be
   ≤ 2 MS/s, so hosts shorten the table for high frequencies. Upload the table first;
   `SET_WAVE` while running switches tables at once. The host computes every waveform.
+- Both drive the same wave-out node: in analog mode the firmware makes PB6 (the square
+  output) a floating input, otherwise its idle level clamps the DAC. Output span measured on
+  HW 2.6: about 0.03 V (code 0) to 2.73 V (code 4095); square high ≈ 2.6 V.
 
 ## Roll mode (firmware ≥ 0.5.0)
 
 `ROLL` messages use the `FRAME` layout with: `frame_no` = index of the chunk's first sample
 since roll mode started (consecutive chunks continue the count), `flags` bit 3 (roll) set and
 bit 4 set when samples were lost before this chunk, `pretrigger` 0. There is no trigger. The
-firmware restarts the FPGA capture every 4096 samples; the few samples lost there (the stale
-FIFO samples plus the restart) are flagged with bit 4. Sensible up to a few tens of kS/s.
+firmware restarts the FPGA capture every 4096 samples. The FIFO stops writing when full, and a
+restarted capture begins with its 150 pretrigger samples, which are the last ones already sent
+(measured: 4 stale + 146 exact duplicates), so the firmware drops them and the stream stays
+continuous. Bit 4 is set only after a settings change re-armed the capture. Throughput tops
+out around 75 kS/s (the FIFO is polled per sample); the UI rolls at ≤ 2 kS/s.
