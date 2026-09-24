@@ -82,7 +82,12 @@ int gen_set_wave(const uint8_t *b, size_t n)
   if (was_running) DMA2_Channel4->CCR &= ~DMA_CCR_EN;
   wave_len = (uint16_t)(n / 2);
   for (size_t i = 0; i < wave_len; i++) wave[i] = (uint16_t)(b[2 * i] | b[2 * i + 1] << 8);
-  if (was_running) return gen_set(GEN_ANALOG, scope.gen_freq, scope.gen_duty);
+  if (!was_running) return 0;
+  // Restart at the current frequency if the new table allows it; otherwise the output stops
+  // until the host's SET_GEN brings the new frequency (a longer table at the old frequency
+  // could need more than GEN_DAC_MAX_RATE, e.g. 512 points after 125 kHz).
+  if ((uint32_t)wave_len * scope.gen_freq <= GEN_DAC_MAX_RATE) return gen_set(GEN_ANALOG, scope.gen_freq, scope.gen_duty);
+  gen_set(GEN_OFF, scope.gen_freq, scope.gen_duty);
   return 0;
 }
 

@@ -159,7 +159,12 @@ verifies. The host owns the format:
 - **Analog** (`mode 2`): the DAC (12-bit) plays the table from `SET_WAVE` in a loop,
   `freq_hz` times per second, via DMA2 channel 4 paced by TIM7. `freq_hz × wave_len` must be
   ≤ 2 MS/s, so hosts shorten the table for high frequencies. Upload the table first;
-  `SET_WAVE` while running switches tables at once. The host computes every waveform.
+  `SET_WAVE` while running switches tables at once, at the running frequency. The host
+  computes every waveform.
+  - A table too long for the running frequency (e.g. 512 points while at 125 kHz): firmware
+    ≥ 1.0.1 accepts it and turns the output off until the next `SET_GEN`; up to 1.0.0 it
+    answers `BAD_VALUE`, so hosts should then send `SET_GEN` mode 0, the table again, and
+    `SET_GEN` with the new frequency (the web page does).
 - Both drive the same wave-out node: in analog mode the firmware makes PB6 (the square
   output) a floating input, otherwise its idle level clamps the DAC. Output span measured on
   HW 2.6: about 0.03 V (code 0) to 2.73 V (code 4095); square high ≈ 2.6 V.

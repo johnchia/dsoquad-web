@@ -183,7 +183,16 @@ export class Device extends EventTarget {
    * always arrives before the SET_GEN that uses it). */
   setGenWave(codes, freq) {
     return this.coalesceTask('gen', async (d) => {
-      await d.command(P.SET_WAVE, P.body.wave(codes));
+      try {
+        await d.command(P.SET_WAVE, P.body.wave(codes));
+      } catch (e) {
+        // Firmware ≤ 1.0.0 restarts a running output at its old frequency when the table
+        // changes, and refuses a table too long for it (e.g. 512 points after 125 kHz, which
+        // would need 64 MS/s): stop the output, then load the table.
+        if (!(e instanceof DeviceError) || !/BAD_VALUE/.test(e.message)) throw e;
+        await d.command(P.SET_GEN, P.body.gen(P.GEN_OFF, freq, 50));
+        await d.command(P.SET_WAVE, P.body.wave(codes));
+      }
       await d.command(P.SET_GEN, P.body.gen(P.GEN_ANALOG, freq, 50));
     });
   }

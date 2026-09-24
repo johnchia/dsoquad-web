@@ -357,6 +357,7 @@ generator (external amplifier optional).
 a large bipolar capacitor, a driver with a datasheet, and any amplifier to try.
 
 ### Next release (1.0.1)
+- [x] Generator fix (in source, found by the owner 2026-09-24): after an analog frequency high enough to need a short table (e.g. 125 kHz, 16 points), a longer table for a low frequency was refused (`SET_WAVE` restarted the output at the old frequency: 512 × 125 kHz > 2 MS/s), and the page never sent the new frequency, so the output stayed stuck. Now a table that doesn't fit the running frequency turns the output off until `SET_GEN`. The page (live) also recovers on 1.0.0: on a refused table it switches the output off, reloads and starts. Verified on the DSO with 1.0.0: 125 kHz → 1 kHz works.
 - [x] Status screen (in source, not yet released): shows the □ + ○ exit hint only when an app is installed in APP3; otherwise it points at the page's Firmware… button for updates and DFU (▶/|| at power-on) for recovery. Release: bump `FW_VERSION`, commit, `make -C firmware/app release`, push, tag.
 
 **Rough total:** 4–6 weeks part-time to a solid v1 (M0–M5), plus 1–2 weeks for the analyzer (M6). M1 either confirms the approach within the first week or triggers the libopencm3 or bare-metal fallback.

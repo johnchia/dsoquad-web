@@ -101,3 +101,34 @@ test('roll mode streams contiguous chunks at the sample rate', { timeout: 20000 
     await dev.close();
   }
 });
+
+test('setGenWave recovers when the firmware refuses a table too long for its running frequency', async () => {
+  // Firmware 1.0.0: a table change restarts a running analog output at its old frequency, and
+  // refuses the table if len × freq > 2 MS/s.
+  const dev = { mode: P.GEN_ANALOG, freq: 125000, len: 16 };
+  const sent = [];
+  const t = {
+    label: 'fake', open: async () => {}, close: async () => {},
+    write: async (bytes) => {
+      const { type, seq, body } = P.decode(bytes.subarray(0, bytes.length - 1));
+      const v = new DataView(body.buffer, body.byteOffset, body.byteLength);
+      let status = 0;
+      if (type === P.SET_WAVE) {
+        const n = body.length / 2;
+        if (dev.mode === P.GEN_ANALOG && n * dev.freq > P.DAC_MAX_RATE) status = 2; else dev.len = n;
+      } else if (type === P.SET_GEN) {
+        const mode = body[0], freq = v.getUint32(1, true);
+        if (mode === P.GEN_ANALOG && dev.len * freq > P.DAC_MAX_RATE) status = 2; else Object.assign(dev, { mode, freq });
+      }
+      sent.push([type, status]);
+      queueMicrotask(() => t.onbytes(P.encode(P.ACK, seq, Uint8Array.of(status))));
+    },
+  };
+  const d = new Device(t);
+  await d.open();
+  await d.setGenWave(new Array(512).fill(2048), 1000);
+  assert.deepEqual(dev, { mode: P.GEN_ANALOG, freq: 1000, len: 512 });
+  assert.deepEqual(sent.map(([type]) => type), [P.SET_WAVE, P.SET_GEN, P.SET_WAVE, P.SET_GEN]);
+  assert.equal(sent[0][1], 2, 'first table refused (BAD_VALUE)');
+  assert.ok(sent.slice(1).every(([, st]) => st === 0), 'then off, table, start all accepted');
+});
