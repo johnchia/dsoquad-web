@@ -10,6 +10,7 @@ import { openFwDialog, bundledFirmware } from './fw-ui.js';
 import * as Gen from './wavegen.js';
 import { WINDOWS, peak as fftPeak, spectrum } from './fft.js';
 import { SpectrumView } from './spectrum.js';
+import { autoset } from './autoset.js';
 import { MEASUREMENTS, measure } from './measure.js';
 import { download, frameCsv, sharedSettings, shareLink, snapshotPng, stamp } from './export.js';
 
@@ -675,7 +676,7 @@ function syncControls() {
   const run = $('run');
   run.textContent = s.running ? 'Stop' : 'Run';
   run.classList.toggle('running', s.running);
-  run.disabled = $('single').disabled = !dev;
+  run.disabled = $('single').disabled = $('autoset').disabled = !dev;
   $('connect').textContent = dev ? 'Disconnect' : 'Connect';
   $('connect').classList.toggle('primary', !dev);
   $('source').disabled = !!dev;
@@ -752,6 +753,7 @@ function bind() {
 
   $('run').onclick = toggleRun;
   $('single').onclick = single;
+  $('autoset').onclick = autoSet;
   $('connect').onclick = onConnectClick;
   $('playback-file').onchange = async (e) => {
     const file = e.target.files[0];
@@ -794,6 +796,7 @@ function bind() {
     if (suspended || e.target.closest('input, select, textarea, dialog') || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === ' ') { e.preventDefault(); toggleRun(); }
     if (e.key === 's' || e.key === 'S') single();
+    if (e.key === 'a' || e.key === 'A') autoSet();
   });
 }
 
@@ -810,6 +813,40 @@ function toggleRun() {
   singleArmed = false;
   settings.running = !settings.running;
   changed(send.acq);
+}
+
+/** Auto set: fit the enabled channels, show a few periods, trigger mid-signal. */
+async function autoSet() {
+  if (!dev || suspended) return;
+  const d = dev;
+  suspended = true;
+  $('autoset').disabled = true;
+  try {
+    const r = await autoset({
+      dev: d, ranges, tdivs: TDIVS,
+      on: settings.ch.map((c) => c.on), coupling: settings.ch.map((c) => c.coupling), trigSource: settings.trig.source,
+      offsetFor: (ch, range, posDiv) => Cal.offsetFor(cal, ch, range, P.ADC_ZERO + posDiv * P.CODES_PER_DIV),
+      volts: (f, i) => frameVolts(f)[i ? 'b' : 'a'],
+      progress: (t) => status(t),
+    });
+    r.ch.forEach((c, i) => { if (c) Object.assign(settings.ch[i], { on: true, range: c.range, posDiv: c.posDiv }); });
+    if (r.tdiv) settings.tdiv = r.tdiv;
+    if (r.trig) Object.assign(settings.trig, { source: r.trig.source, kind: 1, levelDiv: r.trig.levelDiv });
+    if (settings.mode !== 'normal') settings.mode = 'auto';
+    settings.running = true;
+    singleArmed = false;
+    const parts = r.ch.map((c, i) => (c ? `${'AB'[i]} ${fmtSI(ranges[c.range], 'V')}/div` : null)).filter(Boolean);
+    toast(`Auto set: ${parts.join(', ')}${r.found ? `, ${fmtSI(settings.tdiv, 's')}/div (period ${fmtSI(r.period, 's')})` : ', no periodic signal found: time/div unchanged'}`, 'info');
+  } catch (e) {
+    report(e);
+  } finally {
+    suspended = false;
+    $('autoset').disabled = false;
+    if (dev === d) {
+      status(`Connected · ${d.t.label}`, 'ok');
+      changed(send.all);
+    }
+  }
 }
 
 function single() {

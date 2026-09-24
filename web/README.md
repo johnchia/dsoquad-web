@@ -17,10 +17,15 @@ The browser must run on the machine the DSO is plugged into.
 | `/?sim` | Built-in simulator. CH A follows the generator (square wave when it's on, otherwise a 1 kHz sine); CH B is 2.7 kHz. |
 | `/?play=recordings/square-1khz.dsoq` | Replays a recording made with `python3 tools/dsoq record ... -o web/recordings/x.dsoq`. |
 
-Keys: **Space** run/stop, **S** single. Drag the markers on the scope: trace zeros (left: A, B,
+Keys: **Space** run/stop, **S** single, **A** auto set. Drag the markers on the scope: trace zeros (left: A, B,
 math M), trigger level (right) and trigger position (top). Cursors (Display panel) are dragged
 by their tabs or anywhere along their lines.
 
+- **Auto set** (header button or **A**): picks V/div and position for each enabled channel (one
+  trace centred, or A above B), a time/div that shows about three periods, and a rising-edge
+  trigger at the middle of the signal. It keeps the current trigger channel when that has a
+  usable signal. It takes a few quick captures, under a second for signals above ~100 Hz and up
+  to a few seconds for slow ones; with no periodic signal it leaves the time/div alone.
 - **Measure:** pick any of Vpp, Vavg, Vrms, AC rms, max, min, top, base, amplitude, frequency,
   period, duty, ±width, rise and fall (10–90 %). Mean and rms use whole cycles when there are
   edges; a rise/fall at the time resolution shows as "< 1 sample".
