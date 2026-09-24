@@ -21,7 +21,7 @@ SRCS := src/startup.c src/escape.c src/main.c src/usb_descriptors.c src/proto.c 
         $(TUSB)/portable/st/stm32_fsdev/fsdev_common.c
 ASRCS := sys/BIOS.S
 
-BUILD_ID := $(shell git describe --always --dirty 2>/dev/null || echo unknown)-$(shell date +%m%d%H%M)
+BUILD_ID := $(shell git describe --always --dirty --match=none-by-design 2>/dev/null || echo unknown)-$(shell date +%m%d%H%M)
 
 ARCH    := -mcpu=cortex-m3 -mthumb -msoft-float
 CFLAGS  := $(ARCH) -Os -g -std=gnu11 -Wall -Wextra -Wno-unused-parameter \
