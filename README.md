@@ -6,6 +6,8 @@ Chrome/Edge through Web Serial: channels, timebase, trigger, generator, calibrat
 
 **Open the app: https://johnchia.github.io/dsoquad-web/** (`?sim` for the simulator)
 
+**Installing:** [docs/install.md](docs/install.md) (one DFU flash, then updates from the page).
+
 - `firmware/app`: the APP1 firmware (runs on the stock SYS 1.52 BIOS; USB CDC via TinyUSB).
   Build with `make -C firmware/app` (needs `gcc-arm-none-eabi`, `git submodule update --init`),
   flash with `make -C firmware/app flash` while the DSO is in DFU mode (hold ▶/|| at power-on).

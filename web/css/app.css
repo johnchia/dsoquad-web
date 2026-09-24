@@ -235,3 +235,21 @@ dialog footer .spacer { flex: 1; }
 .measure .ch-cursor b { color: #e6edf3; }
 
 label.check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+/* ------------------------------------------------------------------ narrow screens */
+
+.help { color: var(--muted); text-decoration: none; border: 1px solid var(--border); border-radius: 50%; width: 22px; height: 22px; display: inline-grid; place-items: center; font-size: 12px; }
+.help:hover { color: var(--text); border-color: var(--muted); }
+
+/* Below ~1000 px the page scrolls: scope, then the controls, then the other panels. */
+@media (max-width: 1000px) {
+  html, body { height: auto; }
+  main { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; }
+  .scope { min-height: 0; }
+  #scope { height: 62vh; flex: none; }
+  #spectrum { height: 40vh; flex: none; }
+  .controls { grid-row: 2; border-top: none; padding-top: 0; }
+  aside { grid-row: 3; overflow: visible; padding: 0 10px 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; align-items: start; }
+  aside fieldset { margin: 0; }
+  .stats { margin-left: 0; }
+}

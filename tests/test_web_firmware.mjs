@@ -49,6 +49,9 @@ test('the bundled firmware matches its manifest', { skip: !existsSync(`${root}we
   assert.equal(img.length, m.size);
   assert.equal(P.crc32(img).toString(16).padStart(8, '0'), m.crc32);
   assert.equal(P.imageVersion(img), m.fw);
+  // A version bump in the source needs a new release (make -C firmware/app release).
+  const src = readFileSync(`${root}firmware/app/src/main.c`, 'utf8').match(/#define FW_VERSION "([^"+]+)\+"/)[1];
+  assert.ok(m.fw.startsWith(`${src}+`), `web/firmware has ${m.fw}, source is ${src}: publish a new build`);
 });
 
 test('fwUpdate stages every byte, then commits with the right size and CRC', async () => {

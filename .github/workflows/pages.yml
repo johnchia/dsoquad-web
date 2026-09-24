@@ -25,8 +25,22 @@ jobs:
       - run: node --test tests/*.mjs
       - run: python3 -m unittest discover -s tests  # builds proto.c for the host with gcc
 
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0   # git describe for the build ID
+      - run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
+      - run: make -C firmware/app   # fails if the image outgrows APP1 or touches protected flash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsoq_app1
+          path: firmware/app/build/dsoq_app1.hex
+
   deploy:
-    needs: test
+    needs: [test, firmware]
     runs-on: ubuntu-latest
     environment:
       name: github-pages
