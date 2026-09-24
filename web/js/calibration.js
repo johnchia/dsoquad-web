@@ -144,7 +144,8 @@ export function fitLine(pts) {
 
 export const ZERO_OFFSETS = [79, 154, 229];   // offset registers used for the zero fit (1, 4, 7 div)
 
-/** Zero calibration: inputs open (or grounded), DC coupling. Both channels at once. */
+/** Zero calibration: inputs shorted to ground (open inputs read ~20 mV off on the real unit),
+ * DC coupling. Both channels at once. */
 export async function runZero(dev, cal, { onProgress, signal } = {}) {
   const out = structuredClone(cal);
   const report = [];

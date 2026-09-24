@@ -69,7 +69,10 @@ export function openCalDialog(ctx) {
     report.forEach((x) => fresh.add(`${x.ch}/${x.range}/z`));
     const worst = Math.max(...report.map((x) => x.resid));
     const noisy = report.filter((x) => x.noise > 3);
-    progress(1, `Zero measured. Fit residual ≤ ${worst.toFixed(2)} codes${noisy.length ? `; noisy on ${noisy.length} range(s): is something still connected?` : '.'}`);
+    const oldGains = draft.ch.flat().some((e) => e.gainCal);
+    progress(1, `Zero measured. Fit residual ≤ ${worst.toFixed(2)} codes`
+      + (noisy.length ? `; noisy on ${noisy.length} range(s): are both inputs shorted to ground?` : '.')
+      + (oldGains ? ' Gains were measured against the previous zero: measure them again for best accuracy.' : ''));
   });
 
   $('cal-wave-high').onclick = async () => {
