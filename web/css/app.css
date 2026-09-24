@@ -81,7 +81,24 @@ h1 { font-size: 15px; margin: 0; letter-spacing: 0.02em; }
 
 /* ------------------------------------------------------------------ layout */
 
-main { flex: 1; display: flex; min-height: 0; }
+/* Scope and the less-used panels side by side; the front-panel controls across the bottom. */
+main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+.controls {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 10px;
+  padding: 8px 12px 10px 10px;
+  border-top: 1px solid var(--border);
+}
+.controls fieldset { margin: 0; }
+label.ch-d { color: var(--d); }
 
 .scope { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 10px; gap: 6px; }
 #scope { min-height: 280px; }
@@ -114,8 +131,7 @@ main { flex: 1; display: flex; min-height: 0; }
 .trig, .trig legend { color: var(--trig); }
 
 aside {
-  width: 320px;
-  flex-shrink: 0;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 10px 12px 20px 2px;
@@ -218,41 +234,4 @@ dialog footer .spacer { flex: 1; }
 .measure .ch-m b { color: #ff7eb6; }
 .measure .ch-cursor b { color: #e6edf3; }
 
-/* ------------------------------------------------------------------ dock under the scope */
-
-.dock { flex-shrink: 0; }
-.tabs { display: flex; align-items: flex-end; gap: 2px; border-bottom: 1px solid var(--border); }
-.tabs button {
-  position: relative;
-  border-radius: 6px 6px 0 0;
-  border-bottom: none;
-  margin-bottom: -1px;
-  padding: 4px 14px;
-  background: transparent;
-  color: var(--muted);
-}
-.tabs button.active { background: var(--panel); color: var(--text); border-bottom: 1px solid var(--panel); }
-.tabs button.on::after {   /* the feature is switched on */
-  content: '';
-  position: absolute;
-  top: 5px; right: 4px;
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: var(--ok);
-}
-.tabs .hint { margin-left: auto; padding: 0 4px 4px; color: var(--muted); font-size: 11px; }
-.panel {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
-  gap: 0 26px;
-  align-items: start;
-  padding: 10px 12px 3px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-top: none;
-  border-radius: 0 0 8px 8px;
-}
-.panel[hidden] { display: none; }
-.panel .wide-cell { grid-column: 1 / -1; margin-bottom: 8px; }
-.panel dl.info { margin-bottom: 10px; }
 label.check { display: flex; align-items: center; gap: 6px; cursor: pointer; }

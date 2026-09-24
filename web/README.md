@@ -31,11 +31,11 @@ by their tabs or anywhere along their lines.
 - **Saving:** PNG (screen with scales and measurements), CSV (the capture in volts, time from
   the trigger), and **Link**: copies a URL whose fragment holds the settings (nothing is sent to
   a server). Opening it loads those settings.
-- **Firmware…** (Device tab): installs the firmware published with the page, or a `.hex`, over
+- **Firmware…** (Device panel): installs the firmware published with the page, or a `.hex`, over
   USB (firmware ≥ 0.6).
 
 Settings live in `localStorage` and are pushed to the device on every connect; the page owns
-the settings, not the device. Export/Import in the Device tab saves them as JSON. The sidebar holds the channel, timebase and trigger controls; Measure, Display, Generator, FFT and Device are tabs under the scope (click the open tab to hide the dock).
+the settings, not the device. Export/Import in the Device panel saves them as JSON. Channels, timebase and trigger sit in a strip across the bottom; Measure, Display, Generator, FFT and Device are in the sidebar.
 
 Files: `js/protocol.js` (codec, tested by `node --test tests/*.mjs` against the Python codec),
 `js/device.js` (request/reply matching, coalescing of rapid changes), `js/transport.js`
