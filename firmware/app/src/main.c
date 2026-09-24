@@ -12,8 +12,9 @@
 #include "scope.h"
 #include "store.h"
 #include "gen.h"
+#include "fwupdate.h"
 
-#define FW_VERSION "0.5.0-m4+" BUILD_ID
+#define FW_VERSION "0.6.0+" BUILD_ID
 #define ESCAPE_HOLD_MS 2000
 #define BOOT_OK_MS     5000
 
@@ -94,6 +95,7 @@ enum {
   MSG_HELLO = 0x01, MSG_PING = 0x02, MSG_GET_STATE = 0x03,
   MSG_SET_CHANNEL = 0x10, MSG_SET_TIMEBASE = 0x11, MSG_SET_TRIGGER = 0x12, MSG_SET_ACQ = 0x13,
   MSG_SET_GEN = 0x14, MSG_SET_SYSTEM = 0x15, MSG_SET_WAVE = 0x16, MSG_GET_TABLES = 0x20, MSG_STORE_READ = 0x21, MSG_STORE_WRITE = 0x22,
+  MSG_FW_BEGIN = 0x23, MSG_FW_DATA = 0x24, MSG_FW_COMMIT = 0x25,
   MSG_REG_SET = 0x30, MSG_REG_GET = 0x31, MSG_PARAM_SET = 0x32, MSG_PEEK = 0x33, MSG_POKE = 0x34, MSG_REBOOT = 0x3F,
   MSG_INFO = 0x81, MSG_PONG = 0x82, MSG_STATE = 0x83, MSG_FRAME = 0x84, MSG_TABLE = 0x85, MSG_STORE_DATA = 0x86, MSG_ROLL = 0x87,
   MSG_LOG = 0x8E, MSG_ACK = 0xA0, MSG_REG_VALUE = 0xB1, MSG_MEM_DATA = 0xB3,
@@ -103,6 +105,7 @@ enum { ACK_OK, ACK_BAD_LENGTH, ACK_BAD_VALUE, ACK_UNKNOWN_TYPE, ACK_BAD_FRAME, A
 #define PROTO_VERSION 1
 
 static struct proto_tx tx;
+static void status_line(int row, uint16_t color, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 
 static void cdc_sink(const uint8_t *p, size_t len)
 {
@@ -256,6 +259,26 @@ static void handle_msg(const uint8_t *m, size_t len)
     if (n > STORE_MAX) { send_ack(seq, ACK_BAD_LENGTH); break; }
     send_ack(seq, store_write(b, (uint16_t)n) == 0 ? ACK_OK : ACK_FLASH_ERROR);
     break;
+  case MSG_FW_BEGIN: {
+    NEED(8);
+    int r = fw_begin(get_u32(b), get_u32(b + 4));
+    send_ack(seq, r == 0 ? ACK_OK : r == FW_ERR_SIZE ? ACK_BAD_LENGTH : r == FW_ERR_FLASH ? ACK_FLASH_ERROR : ACK_BAD_VALUE);
+    if (r == 0) status_line(9, C_YEL, " Receiving firmware update...");
+    break;
+  }
+  case MSG_FW_DATA: {
+    if (n < 4) { send_ack(seq, ACK_BAD_LENGTH); break; }
+    int r = fw_data(get_u32(b), b + 4, n - 4);
+    send_ack(seq, r == 0 ? ACK_OK : r == FW_ERR_FLASH ? ACK_FLASH_ERROR : ACK_BAD_VALUE);
+    break;
+  }
+  case MSG_FW_COMMIT:
+    NEED(8);
+    if (fw_check(get_u32(b), get_u32(b + 4))) { send_ack(seq, ACK_BAD_VALUE); break; }
+    send_ack(seq, ACK_OK);
+    status_line(9, C_YEL, " Installing update, restarting...");
+    delay_ms(100);  // let the ACK reach the host
+    fw_install();
   case MSG_REG_SET: NEED(5); __Set(b[0], get_u32(b + 1)); send_ack(seq, ACK_OK); break;
   case MSG_REG_GET: {
     NEED(1);
@@ -345,7 +368,7 @@ static void status_update(void)
 {
   const char *usb = tud_suspended() ? "suspended" : tud_mounted() ? "connected" : "waiting for host";
   status_line(3, tud_mounted() ? C_GRN : C_YEL, " USB:  %s", usb);
-  status_line(4, tud_cdc_connected() ? C_GRN : C_GRY, " Port: %s", tud_cdc_connected() ? "open" : "closed");
+  status_line(4, tud_cdc_connected() ? C_GRN : C_YEL, " Port: %s", tud_cdc_connected() ? "open" : "closed");
   status_line(6, C_WHT, " Battery %lu mV   Up %lu s", (unsigned long)__Get(SYS_V_BATTERY),
               (unsigned long)(ms / 1000));
   static const char *const modes[] = { "stopped", "normal", "auto", "single", "roll" };
@@ -384,11 +407,11 @@ int main(void)
 
   __Clear_Screen(C_BLK);
   status_line(0, C_CYN, " DSO Quad Web Control");
-  status_line(8, C_GRY, " fw " FW_VERSION);
+  status_line(8, C_CYN, " fw " FW_VERSION);
   status_line(1, C_WHT, " HW %s  DFU %s", version_str(__Chk_HDW()), version_str(__Chk_DFU()));
   status_line(2, C_WHT, " Clock %s", usb_clock_setup());
-  status_line(10, C_GRY, " Exit to scope: hold [] + () for 2 s");
-  status_line(11, C_GRY, " (or power on holding () for the fallback)");
+  status_line(10, C_WHT, " Exit to scope: hold [] + () for 2 s");
+  status_line(11, C_WHT, " (or power on holding () for the fallback)");
 
   scope_init();
   usb_takeover();

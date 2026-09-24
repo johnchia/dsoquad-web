@@ -27,6 +27,7 @@ SECTIONS
   .data : {
     _sdata = .;
     *(.data*)
+    *(.ramfunc*)   /* code that must run from RAM (fwupdate.c) */
     . = ALIGN(4);
     _edata = .;
   } > ram AT > rom

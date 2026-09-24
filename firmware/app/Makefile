@@ -11,7 +11,7 @@ CC      := $(CROSS)gcc
 OBJCOPY := $(CROSS)objcopy
 SIZE    := $(CROSS)size
 
-SRCS := src/startup.c src/escape.c src/main.c src/usb_descriptors.c src/proto.c src/scope.c src/store.c src/gen.c \
+SRCS := src/startup.c src/escape.c src/main.c src/usb_descriptors.c src/proto.c src/scope.c src/store.c src/gen.c src/flash.c src/fwupdate.c \
         $(TUSB)/tusb.c $(TUSB)/common/tusb_fifo.c \
         $(TUSB)/device/usbd.c \
         $(TUSB)/class/cdc/cdc_device.c \
