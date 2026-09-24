@@ -205,7 +205,7 @@ Also worth investigating (not required): whether the DFU bootloader can be enter
 - [ ] Waveform canvas with graticule; CH A/B plus digital C/D traces.
 - [ ] Controls: run/stop/single/auto, V/div and coupling per channel, position/offset, time/div, trigger source/edge/level/position (draggable markers).
 - [ ] Settings persisted in the browser and pushed on connect; resync via `GET_STATE` after a page reload.
-- [ ] Device panel: battery level, backlight/LCD off, beeper mute, firmware/HW info, and an **"Exit to disk mode"** button (escape route 1).
+- [ ] Device panel: battery level, backlight/LCD off, beeper mute, firmware/HW info. *(No exit button in the web UI, per the owner. Escapes are ○ at power-on and DFU.)*
 - [ ] Mock transport and recorded-frame playback for offline development.
 - **Exit criterion:** the MVP works in Chrome on Linux and Windows, with frame rate ≥ 20 fps at 4K depth.
 

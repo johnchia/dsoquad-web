@@ -1,13 +1,5 @@
-// M1 "hello USB serial": CDC-ACM port with test commands, status screen and escape routes.
-//
-// Line commands (terminate with \n):
-//   ping          -> pong
-//   info          -> versions, clocks, battery, counters
-//   tx <bytes>    -> device sends <bytes> of test pattern (throughput test)
-//   rx <bytes>    -> device swallows <bytes>, then reports time taken
-//   exit          -> reboot into the APP3 fallback scope (escape route 1)
-//   reboot        -> reboot into this firmware
-//   hang          -> stop kicking the watchdog (tests escape route 5)
+// DSO Quad web-control firmware: binary protocol over USB CDC (docs/protocol.md),
+// acquisition in scope.c, status screen and escape routes.
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,8 +8,10 @@
 #include "tusb.h"
 #include "sys.h"
 #include "escape.h"
+#include "proto.h"
+#include "scope.h"
 
-#define FW_VERSION "0.1.1-m1"
+#define FW_VERSION "0.2.0-m2"
 #define ESCAPE_HOLD_MS 2000
 #define BOOT_OK_MS     5000
 
@@ -92,32 +86,194 @@ void USB_HP_CAN1_TX_IRQHandler(void) { tud_int_handler(0); }
 void USB_LP_CAN1_RX0_IRQHandler(void) { tud_int_handler(0); }
 void USBWakeUp_IRQHandler(void) { tud_int_handler(0); }
 
-// ---------------------------------------------------------------- CDC helpers
+// ---------------------------------------------------------------- protocol output
 
-static void cdc_write_all(const void *buf, uint32_t len)
+enum {
+  MSG_HELLO = 0x01, MSG_PING = 0x02, MSG_GET_STATE = 0x03,
+  MSG_SET_CHANNEL = 0x10, MSG_SET_TIMEBASE = 0x11, MSG_SET_TRIGGER = 0x12, MSG_SET_ACQ = 0x13,
+  MSG_SET_GEN = 0x14, MSG_SET_SYSTEM = 0x15, MSG_GET_TABLES = 0x20,
+  MSG_REG_SET = 0x30, MSG_REG_GET = 0x31, MSG_PARAM_SET = 0x32, MSG_REBOOT = 0x3F,
+  MSG_INFO = 0x81, MSG_PONG = 0x82, MSG_STATE = 0x83, MSG_FRAME = 0x84, MSG_TABLE = 0x85,
+  MSG_LOG = 0x8E, MSG_ACK = 0xA0, MSG_REG_VALUE = 0xB1,
+};
+enum { ACK_OK, ACK_BAD_LENGTH, ACK_BAD_VALUE, ACK_UNKNOWN_TYPE, ACK_BAD_FRAME, ACK_BUSY };
+
+#define PROTO_VERSION 1
+
+static struct proto_tx tx;
+
+static void cdc_sink(const uint8_t *p, size_t len)
 {
-  const uint8_t *p = buf;
   while (len && tud_cdc_connected()) {
-    uint32_t n = tud_cdc_write(p, len);
+    uint32_t n = tud_cdc_write(p, (uint32_t)len);
     p += n;
     len -= n;
-    tud_task();
-    escape_watchdog_kick();
+    if (len) {
+      tud_cdc_write_flush();
+      tud_task();
+      escape_watchdog_kick();
+    }
   }
+}
+
+static void msg_end(void)
+{
+  proto_tx_end(&tx);
   tud_cdc_write_flush();
 }
 
-static void cdc_printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void cdc_printf(const char *fmt, ...)
+static void send_ack(uint8_t seq, uint8_t status)
 {
-  char buf[256];
-  va_list ap;
-  va_start(ap, fmt);
-  int n = vsnprintf(buf, sizeof buf, fmt, ap);
-  va_end(ap);
-  if (n > (int)sizeof buf - 1) n = sizeof buf - 1;
-  if (n > 0) cdc_write_all(buf, (uint32_t)n);
+  proto_tx_begin(&tx, cdc_sink, MSG_ACK, seq);
+  proto_tx_u8(&tx, status);
+  msg_end();
 }
+
+static void put_channels(const struct scope_channel ch[2])
+{
+  for (int i = 0; i < 2; i++) {
+    proto_tx_u8(&tx, ch[i].range);
+    proto_tx_u8(&tx, ch[i].coupling);
+    proto_tx_u8(&tx, ch[i].offset);
+  }
+}
+
+static void send_info(uint8_t seq)
+{
+  proto_tx_begin(&tx, cdc_sink, MSG_INFO, seq);
+  proto_tx_u16(&tx, PROTO_VERSION);
+  proto_tx_u32(&tx, __GetDev_SN());
+  proto_tx_put(&tx, FW_VERSION, sizeof FW_VERSION);  // includes the NUL
+  msg_end();
+}
+
+static void send_state(uint8_t seq)
+{
+  proto_tx_begin(&tx, cdc_sink, MSG_STATE, seq);
+  proto_tx_u8(&tx, scope.acq_mode);
+  proto_tx_u8(&tx, (uint8_t)scope_running());
+  put_channels(scope.ch);
+  proto_tx_u32(&tx, scope.rate_req);
+  proto_tx_u32(&tx, scope.rate_actual);
+  proto_tx_u16(&tx, scope.psc);
+  proto_tx_u16(&tx, scope.arr);
+  proto_tx_u8(&tx, scope.trig_source);
+  proto_tx_u8(&tx, scope.trig_kind);
+  proto_tx_u8(&tx, scope.trig_level);
+  proto_tx_u16(&tx, scope.trig_width);
+  proto_tx_u16(&tx, scope.auto_ms);
+  proto_tx_u8(&tx, scope.gen_mode);
+  proto_tx_u32(&tx, scope.gen_freq);
+  proto_tx_u8(&tx, scope.gen_duty);
+  proto_tx_u8(&tx, scope.backlight);
+  proto_tx_u8(&tx, scope.beep);
+  proto_tx_u32(&tx, scope.frames);
+  msg_end();
+}
+
+static void send_frame(const struct scope_frame *f)
+{
+  proto_tx_begin(&tx, cdc_sink, MSG_FRAME, (uint8_t)f->frame_no);
+  proto_tx_u32(&tx, f->frame_no);
+  proto_tx_u8(&tx, f->flags);
+  proto_tx_u32(&tx, f->rate_actual);
+  put_channels(f->ch);
+  proto_tx_u8(&tx, f->trig_source);
+  proto_tx_u8(&tx, f->trig_kind);
+  proto_tx_u8(&tx, f->trig_level);
+  proto_tx_u16(&tx, SCOPE_PRETRIGGER);
+  proto_tx_u16(&tx, f->count);
+  proto_tx_put(&tx, f->samples, (size_t)f->count * 3);
+  msg_end();
+}
+
+static void send_table(uint8_t seq, uint8_t id, const void *data, uint8_t elem_size, uint32_t count)
+{
+  if (count > 64) count = 64;  // sanity bound; real tables are much smaller
+  proto_tx_begin(&tx, cdc_sink, MSG_TABLE, seq);
+  proto_tx_u8(&tx, id);
+  proto_tx_u8(&tx, elem_size);
+  proto_tx_u8(&tx, (uint8_t)count);
+  proto_tx_put(&tx, data, elem_size * count);
+  msg_end();
+}
+
+static void send_tables(uint8_t seq)
+{
+  const G_attr *g = (const G_attr *)__Get(SYS_GLOBAL);
+  send_table(seq, 0, g, sizeof(G_attr), 1);
+  send_table(seq, 1, (const void *)__Get(SYS_VERTICAL), sizeof(Y_attr), g->Yp_Max + 1u);
+  send_table(seq, 2, (const void *)__Get(SYS_HORIZONTAL), sizeof(X_attr), g->Xp_Max + 6u);
+  send_table(seq, 3, (const void *)__Get(SYS_TRIGGER), sizeof(T_attr), g->Tg_Num + 1u);
+}
+
+// ---------------------------------------------------------------- protocol input
+
+static void handle_msg(const uint8_t *m, size_t len)
+{
+  uint8_t type = m[0], seq = m[1];
+  const uint8_t *b = m + 2;
+  size_t n = len - 2;
+#define NEED(k) do { if (n != (k)) { send_ack(seq, ACK_BAD_LENGTH); return; } } while (0)
+#define RESULT(r) send_ack(seq, (r) == 0 ? ACK_OK : ACK_BAD_VALUE)
+
+  switch (type) {
+  case MSG_HELLO: NEED(0); send_info(seq); break;
+  case MSG_PING:
+    proto_tx_begin(&tx, cdc_sink, MSG_PONG, seq);
+    proto_tx_put(&tx, b, n);
+    msg_end();
+    break;
+  case MSG_GET_STATE: NEED(0); send_state(seq); break;
+  case MSG_SET_CHANNEL: NEED(4); RESULT(scope_set_channel(b[0], b[1], b[2], b[3])); break;
+  case MSG_SET_TIMEBASE: NEED(4); RESULT(scope_set_rate(get_u32(b))); break;
+  case MSG_SET_TRIGGER: NEED(5); RESULT(scope_set_trigger(b[0], b[1], b[2], get_u16(b + 3))); break;
+  case MSG_SET_ACQ: NEED(3); RESULT(scope_set_acq(b[0], get_u16(b + 1))); break;
+  case MSG_SET_GEN: NEED(6); RESULT(scope_set_gen(b[0], get_u32(b + 1), b[5])); break;
+  case MSG_SET_SYSTEM: NEED(2); scope_set_system(b[0], b[1]); send_ack(seq, ACK_OK); break;
+  case MSG_GET_TABLES: NEED(0); send_tables(seq); send_ack(seq, ACK_OK); break;
+  case MSG_REG_SET: NEED(5); __Set(b[0], get_u32(b + 1)); send_ack(seq, ACK_OK); break;
+  case MSG_REG_GET: {
+    NEED(1);
+    uint32_t v = __Get(b[0]);
+    proto_tx_begin(&tx, cdc_sink, MSG_REG_VALUE, seq);
+    proto_tx_u8(&tx, b[0]);
+    proto_tx_u32(&tx, v);
+    msg_end();
+    break;
+  }
+  case MSG_PARAM_SET: NEED(2); __Set_Param(b[0], b[1]); send_ack(seq, ACK_OK); break;
+  case MSG_REBOOT:
+    NEED(1);
+    if (b[0] > 1) { send_ack(seq, ACK_BAD_VALUE); break; }
+    send_ack(seq, ACK_OK);
+    delay_ms(50);  // let the ACK reach the host
+    if (b[0]) escape_to_fallback();
+    escape_reboot();
+  default: send_ack(seq, ACK_UNKNOWN_TYPE); break;
+  }
+#undef NEED
+#undef RESULT
+}
+
+static struct proto_rx rx;
+
+static void cdc_poll(void)
+{
+  uint8_t buf[64];
+  while (tud_cdc_available()) {
+    uint32_t n = tud_cdc_read(buf, sizeof buf);
+    for (uint32_t i = 0; i < n; i++) {
+      const uint8_t *msg;
+      size_t len;
+      int r = proto_rx_byte(&rx, buf[i], &msg, &len);
+      if (r > 0) handle_msg(msg, len);
+      else if (r < 0) send_ack(0, ACK_BAD_FRAME);
+    }
+  }
+}
+
+// ---------------------------------------------------------------- status screen
 
 static const char *version_str(const char *p)
 {
@@ -126,103 +282,6 @@ static const char *version_str(const char *p)
   if ((a >= 0x08000000u && a < 0x08040000u) || (a >= 0x20000000u && a < 0x2000C000u)) return p;
   return "n/a";
 }
-
-static const char *sys_str(uint8_t kind)
-{
-  uint32_t p = __Get(kind);
-  return p ? version_str((const char *)p) : "n/a";
-}
-
-// ---------------------------------------------------------------- commands
-
-static uint32_t rx_remaining, rx_start;
-
-static void cmd_tx(uint32_t total)
-{
-  static uint8_t pattern[64];
-  for (unsigned i = 0; i < sizeof pattern; i++) pattern[i] = (uint8_t)i;
-  uint32_t left = total;
-  while (left && tud_cdc_connected()) {
-    uint32_t n = left < sizeof pattern ? left : sizeof pattern;
-    uint32_t w = tud_cdc_write(pattern, n);
-    left -= w;
-    if (w < n) tud_cdc_write_flush();
-    tud_task();
-    escape_watchdog_kick();
-  }
-  tud_cdc_write_flush();
-}
-
-static void handle_line(char *line)
-{
-  char *arg = strchr(line, ' ');
-  if (arg) *arg++ = 0;
-
-  if (!strcmp(line, "ping")) {
-    cdc_printf("pong\r\n");
-  } else if (!strcmp(line, "info")) {
-    cdc_printf("fw %s\r\nhw %s\r\nsys %s\r\ndfu %s\r\nfpga %s\r\nfpga_ok %lu\r\n",
-               FW_VERSION, version_str(__Chk_HDW()), sys_str(SYS_SYSVER), version_str(__Chk_DFU()),
-               sys_str(SYS_FPGAVER), (unsigned long)__Get(SYS_FPGA_OK));
-    cdc_printf("serial %08lX\r\nsysclk %lu\r\nbattery_mv %lu\r\ncharging %lu\r\nusb_power %lu\r\n",
-               (unsigned long)__GetDev_SN(), (unsigned long)sysclk_hz,
-               (unsigned long)__Get(SYS_V_BATTERY), (unsigned long)__Get(SYS_CHARGE),
-               (unsigned long)__Get(SYS_USB_POWER));
-    cdc_printf("uptime_ms %lu\r\nstray_irq %lu\r\nwdg_resets %lu\r\n", (unsigned long)ms,
-               (unsigned long)(stray_irq ? stray_irq - 1 : 0xFFFFFFFFu),
-               (unsigned long)escape_watchdog_resets());
-  } else if (!strcmp(line, "tx") && arg) {
-    cmd_tx(strtoul(arg, NULL, 0));
-  } else if (!strcmp(line, "rx") && arg) {
-    rx_remaining = strtoul(arg, NULL, 0);
-    rx_start = ms;
-  } else if (!strcmp(line, "exit")) {
-    cdc_printf("exiting to APP3\r\n");
-    delay_ms(50);
-    escape_to_fallback();
-  } else if (!strcmp(line, "reboot")) {
-    cdc_printf("rebooting\r\n");
-    delay_ms(50);
-    escape_reboot();
-  } else if (!strcmp(line, "hang")) {
-    cdc_printf("hanging; watchdog reset in ~2 s\r\n");
-    delay_ms(50);
-    for (;;) {}
-  } else if (line[0]) {
-    cdc_printf("? %s\r\n", line);
-  }
-}
-
-static void cdc_poll(void)
-{
-  static char line[64];
-  static uint32_t len;
-  uint8_t buf[64];
-
-  while (tud_cdc_available()) {
-    uint32_t n = tud_cdc_read(buf, sizeof buf);
-    uint32_t i = 0;
-    if (rx_remaining) {
-      uint32_t eat = n < rx_remaining ? n : rx_remaining;
-      rx_remaining -= eat;
-      i = eat;
-      if (!rx_remaining) cdc_printf("rx done %lu ms\r\n", (unsigned long)(ms - rx_start));
-    }
-    for (; i < n; i++) {
-      char c = (char)buf[i];
-      if (c == '\r') continue;
-      if (c == '\n') {
-        line[len] = 0;
-        handle_line(line);
-        len = 0;
-      } else if (len < sizeof line - 1) {
-        line[len++] = c;
-      }
-    }
-  }
-}
-
-// ---------------------------------------------------------------- status screen
 
 static void status_line(int row, uint16_t color, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 static void status_line(int row, uint16_t color, const char *fmt, ...)
@@ -249,6 +308,9 @@ static void status_update(void)
   status_line(4, tud_cdc_connected() ? C_GRN : C_GRY, " Port: %s", tud_cdc_connected() ? "open" : "closed");
   status_line(6, C_WHT, " Battery %lu mV   Up %lu s", (unsigned long)__Get(SYS_V_BATTERY),
               (unsigned long)(ms / 1000));
+  static const char *const modes[] = { "stopped", "normal", "auto", "single" };
+  status_line(5, C_WHT, " Acq:  %s  %lu S/s  frames %lu", modes[scope.acq_mode & 3],
+              (unsigned long)scope.rate_actual, (unsigned long)scope.frames);
   if (stray_irq) status_line(7, C_YEL, " Disabled stray IRQ %lu", (unsigned long)(stray_irq - 1));
 }
 
@@ -287,15 +349,26 @@ int main(void)
   status_line(10, C_GRY, " Exit to scope: hold [] + () for 2 s");
   status_line(11, C_GRY, " (or power on holding () for the fallback)");
 
+  scope_init();
   usb_takeover();
 
   uint32_t last_status = 0, last_battery = 0;
-  int boot_ok = 0;
+  int boot_ok = 0, was_connected = 0;
   for (;;) {
     escape_watchdog_kick();
     tud_task();
     cdc_poll();
     check_escape_keys();
+
+    int connected = tud_cdc_connected();
+    if (was_connected && !connected) scope_set_acq(ACQ_STOP, scope.auto_ms);  // host went away
+    was_connected = connected;
+
+    const struct scope_frame *f = scope_poll(ms);
+    if (f) {
+      if (connected) send_frame(f);
+      scope_frame_done();
+    }
 
     if (!boot_ok && ms > BOOT_OK_MS) { escape_boot_ok(); boot_ok = 1; }
     if (ms - last_status > 250) { last_status = ms; status_update(); }
