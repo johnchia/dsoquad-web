@@ -152,6 +152,12 @@ verifies. The host owns the format:
   and channel B ranges 0–7: `a f32`, `b f32`, `gain f32`, `flags u8` (bit 0 zero calibrated,
   bit 1 gain calibrated). 0 V reads as code `a + b × offset_register`; a division is
   `25 × gain` codes.
+- Tag `2`: analyzer channel match v2 (web page ≥ M6.4). `version u8` (2), `count u8`,
+  `created u32`, `coupling u8` (0 DC, 1 AC), `range_a u8`, `range_b u8` (the ranges of the
+  frequency sweep), `nr u8`, then `nr × i16` channel A and `nr × i16` channel B gain per range
+  (1e-4 dB, relative to A on `range_a`; `0x7FFF` not measured), then `count ×` {`f32` Hz,
+  `i16` B/A gain (1e-4 dB), `i16` B/A phase (1e-3°)}. Measured with both probes on the wave
+  out; the analyzer divides every B/A by it.
 
 ## Wave generator (firmware ≥ 0.5.0)
 

@@ -39,13 +39,21 @@ by their tabs or anywhere along their lines.
   a server). Opening it loads those settings.
 - **Firmware…** (Device panel): installs the firmware published with the page, or a `.hex`, over
   USB (firmware ≥ 0.6).
-- **Analyzer** (header switch): frequency response of a circuit. The wave out drives its input,
-  probe A reads the input and B the output (three leads: one for the wave out, two probes). A
-  swept sine from 1 Hz to 125 kHz; each point's capture holds a whole number of generator cycles
-  (both share the 72 MHz clock), so gain and phase come from a single DFT bin without leakage.
-  Both channels auto-range per point. Readouts: the peak and the −3 dB points, sharpened by extra
-  points measured around them. A dashed reference trace, CSV and PNG. In the simulator, pick a
-  circuit to sweep (RC, RLC, loudspeaker). Impedance and loudspeaker parameters are next (M6.4).
+- **Analyzer** (header switch), three leads: the wave out plus both probes. A swept sine from
+  1 Hz to 125 kHz; each point's capture holds a whole number of generator cycles (they share
+  the 72 MHz clock), so gain and phase come from one DFT bin without leakage. Both channels
+  auto-range per point, and readouts are sharpened by extra points measured around them.
+  - **Frequency response:** wave out and A on the circuit's input, B on its output: B/A in dB
+    and degrees, the peak and the −3 dB points.
+  - **Impedance:** wave out → (capacitor) → A → R → B → the part to ground: Z = R·B/(A−B), as
+    |Z| and phase. With a resonance in the sweep (a loudspeaker) it fits the driver model: Re,
+    fs, Zmax, Qms, Qes, Qts, Le, drawn as a dashed trace. Re can also be measured at DC (no
+    capacitor).
+  - **Channel match** (both probes on the wave out, ~30 s, stored on the DSO): the two channels'
+    gain and phase difference per frequency, and every range's gain relative to the others, so
+    results are right even when A and B sit on different ranges of an uncalibrated DSO.
+  - A dashed reference trace, CSV and PNG. In the simulator, pick a circuit (RC, RLC,
+    loudspeaker behind 47 Ω). Hardware scripts: `tools/node/sweep.mjs`, `tools/node/match.mjs`.
 
 Settings live in `localStorage` and are pushed to the device on every connect; the page owns
 the settings, not the device. Export/Import in the Device panel saves them as JSON. Channels, timebase and trigger sit in a strip across the bottom; Measure, Display, Generator, FFT and Device are in the sidebar.

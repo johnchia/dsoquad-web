@@ -280,6 +280,12 @@ export class SimTransport extends VirtualTransport {
     this.dut = null;           // key of DUTS: A on the wave out, B on the circuit's output
   }
 
+  /** DC of a channel's signal with a circuit connected (what AC coupling removes). */
+  dcOf(ch) {
+    const g = this._gen();
+    return ch ? SIM_B_GAIN * DUTS[this.dut].h(1e-3).re * g.dc : g.dc;
+  }
+
   /** Generator frequency the timer really makes, and the table's fundamental. */
   _gen() {
     const s = this.state, w = this.wave;
@@ -326,7 +332,9 @@ export class SimTransport extends VirtualTransport {
     const c = this.state.ch[ch];
     const vdiv = RANGE_V[c.range] ?? 1;
     const noise = (Math.random() - 0.5) * 1.6;
-    const ac = c.coupling ? (ch === 0 && this.state.genMode ? -1.5 : 0) : 0;  // crude AC: remove the square's mean
+    // AC: remove the signal's mean (the generator's DC, through the circuit on B).
+    const ac = !c.coupling ? 0 : this.dut && this.state.genMode === P.GEN_ANALOG ? -this.dcOf(ch)
+      : (ch === 0 && this.state.genMode ? -1.5 : 0);   // crude: the square's mean
     // Front-end errors of the size the real unit has, so calibration has something to fix.
     const zero = (ch ? 14 - c.range * 0.5 : 9 + c.range * 0.4) + (ch ? 0.985 : 1.012) * c.offset;
     const gain = this.frontGain(ch, c.range);

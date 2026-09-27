@@ -110,34 +110,69 @@
     <section class="an-view" id="analyzer" hidden>
       <div class="an-plot"><canvas id="an-plot"></canvas></div>
       <div class="an-panel">
+        <div class="row"><span class="seg wide" id="an-mode"><button value="response">Frequency response</button><button value="impedance">Impedance</button></span></div>
         <fieldset>
-          <legend>Frequency response</legend>
-          <svg class="wiring" viewBox="0 0 300 120" role="img" aria-label="Wiring: wave out to the circuit's input, probe A on the input, probe B on the output, all grounds together">
-            <rect x="110" y="30" width="80" height="50" rx="6" class="box"/>
-            <text x="150" y="60" class="lbl" text-anchor="middle">circuit</text>
-            <line x1="20" y1="45" x2="110" y2="45" class="w-gen"/>
-            <text x="20" y="38" class="lbl gen">wave out</text>
-            <line x1="80" y1="45" x2="80" y2="12" class="w-a"/><circle cx="80" cy="45" r="3" class="dot-a"/>
-            <text x="86" y="16" class="lbl a">A</text>
-            <line x1="190" y1="45" x2="280" y2="45" class="w-b"/><circle cx="240" cy="45" r="3" class="dot-b"/>
-            <line x1="240" y1="45" x2="240" y2="12" class="w-b"/>
-            <text x="246" y="16" class="lbl b">B</text>
-            <text x="262" y="60" class="lbl" text-anchor="middle">load</text>
-            <line x1="20" y1="100" x2="280" y2="100" class="w-gnd"/>
-            <line x1="150" y1="80" x2="150" y2="100" class="w-gnd"/>
-            <text x="20" y="115" class="lbl">all grounds together (wave out, A, B, circuit)</text>
-          </svg>
-          <p class="note">Wave out drives the circuit's input; probe A on the input, B on the output. Result: B / A.</p>
+          <legend id="an-mode-legend">Frequency response</legend>
+          <div id="an-wiring-response">
+            <svg class="wiring" viewBox="0 0 300 120" role="img" aria-label="Wiring: wave out to the circuit's input, probe A on the input, probe B on the output, all grounds together">
+              <rect x="110" y="30" width="80" height="50" rx="6" class="box"/>
+              <text x="150" y="60" class="lbl" text-anchor="middle">circuit</text>
+              <line x1="20" y1="45" x2="110" y2="45" class="w-gen"/>
+              <text x="20" y="38" class="lbl gen">wave out</text>
+              <line x1="80" y1="45" x2="80" y2="12" class="w-a"/><circle cx="80" cy="45" r="3" class="dot-a"/>
+              <text x="86" y="16" class="lbl a">A</text>
+              <line x1="190" y1="45" x2="280" y2="45" class="w-b"/><circle cx="240" cy="45" r="3" class="dot-b"/>
+              <line x1="240" y1="45" x2="240" y2="12" class="w-b"/>
+              <text x="246" y="16" class="lbl b">B</text>
+              <text x="262" y="60" class="lbl" text-anchor="middle">load</text>
+              <line x1="20" y1="100" x2="280" y2="100" class="w-gnd"/>
+              <line x1="150" y1="80" x2="150" y2="100" class="w-gnd"/>
+              <text x="20" y="115" class="lbl">all grounds together (wave out, A, B, circuit)</text>
+            </svg>
+            <p class="note">Wave out drives the circuit's input; probe A on the input, B on the output. Result: B / A.</p>
+          </div>
+          <div id="an-wiring-impedance" hidden>
+            <svg class="wiring" viewBox="0 0 300 130" role="img" aria-label="Wiring: wave out, optional capacitor, probe A, series resistor R, probe B, the device to ground">
+              <line x1="10" y1="50" x2="52" y2="50" class="w-gen"/>
+              <text x="10" y="34" class="lbl gen">wave out</text>
+              <line x1="56" y1="38" x2="56" y2="62" class="w-part"/><line x1="64" y1="38" x2="64" y2="62" class="w-part"/>
+              <text x="60" y="78" class="lbl" text-anchor="middle">C</text>
+              <line x1="64" y1="50" x2="130" y2="50" class="w-wire"/>
+              <line x1="100" y1="50" x2="100" y2="14" class="w-a"/><circle cx="100" cy="50" r="3" class="dot-a"/>
+              <text x="106" y="18" class="lbl a">A</text>
+              <rect x="130" y="42" width="44" height="16" rx="2" class="box"/>
+              <text x="152" y="54" class="lbl" text-anchor="middle">R</text>
+              <line x1="174" y1="50" x2="250" y2="50" class="w-wire"/>
+              <line x1="215" y1="50" x2="215" y2="14" class="w-b"/><circle cx="215" cy="50" r="3" class="dot-b"/>
+              <text x="221" y="18" class="lbl b">B</text>
+              <rect x="236" y="62" width="28" height="28" rx="3" class="box"/>
+              <text x="250" y="80" class="lbl" text-anchor="middle">Z</text>
+              <line x1="250" y1="50" x2="250" y2="62" class="w-wire"/>
+              <line x1="250" y1="90" x2="250" y2="106" class="w-gnd"/>
+              <line x1="10" y1="106" x2="290" y2="106" class="w-gnd"/>
+              <text x="10" y="122" class="lbl">all grounds together · Z: the part under test</text>
+            </svg>
+            <p class="note">C (optional, bipolar, ≥ 1000 µF for a speaker) keeps the generator's DC out of the
+              device: A goes <b>after</b> it. R: 10–100 Ω, its exact value below (measure it). Z = R·B/(A−B).</p>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Channel match</legend>
+          <p class="note" id="an-match-status"></p>
+          <div class="row"><label for="an-apply-match">Apply</label><label class="check"><input type="checkbox" id="an-apply-match"> remove the A/B difference</label></div>
+          <div class="row buttons"><button id="an-match-measure" title="Both probes on the wave out: measures B/A per frequency and stores it on the DSO">Measure…</button><button id="an-match-delete">Delete</button></div>
         </fieldset>
         <fieldset>
           <legend>Sweep</legend>
           <div class="row"><label for="an-from">From</label><input type="number" id="an-from" min="1" max="125000" step="1"><span class="unit">Hz</span></div>
           <div class="row"><label for="an-to">To</label><input type="number" id="an-to" min="1" max="125000" step="1"><span class="unit">Hz</span></div>
+          <div class="row" id="an-r-row"><label for="an-r">R</label><input type="number" id="an-r" min="0.1" step="any"><span class="unit">Ω</span></div>
+          <div class="row" id="an-re-row"><label>Re at DC</label><span id="an-re-value" class="note"></span><button id="an-re-dc" title="Two DC levels through R: only without a capacitor">Measure</button><button id="an-re-clear" title="Fit Re from the sweep instead">×</button></div>
           <div class="row"><label for="an-ppd">Points</label><select id="an-ppd"><option value="5">5 per decade</option><option value="10">10 per decade</option><option value="20">20 per decade</option><option value="40">40 per decade</option></select></div>
           <div class="row"><label for="an-level">Level</label><input type="range" id="an-level" min="10" max="100" step="5"><output id="an-level-out"></output></div>
           <div class="row"><label for="an-average">Readings</label><select id="an-average"><option value="1">1 per point</option><option value="2">2 per point</option><option value="4">4 per point</option><option value="8">8 per point</option></select></div>
           <div class="row"><label for="an-settle">Settle</label><input type="number" id="an-settle" min="0" max="60000" step="10"><span class="unit">ms extra</span></div>
-          <div class="row"><label for="an-refine">Refine</label><label class="check" title="After the sweep, measure extra points around the −3 dB points and the peak"><input type="checkbox" id="an-refine"> around −3 dB and the peak</label></div>
+          <div class="row"><label for="an-refine">Refine</label><label class="check" title="After the sweep, measure extra points around the −3 dB points (or the speaker's √r0 points) and the peak"><input type="checkbox" id="an-refine"> extra points around the readouts</label></div>
           <div class="row"><label>Coupling</label><span class="seg" id="an-coupling"><button value="0">DC</button><button value="1">AC</button></span></div>
           <div class="row" id="an-sim-row"><label for="an-sim">Simulated</label><select id="an-sim"></select></div>
           <div class="row note"><label></label><span id="an-estimate"></span></div>

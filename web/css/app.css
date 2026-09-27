@@ -295,3 +295,7 @@ body.analyzer #fps, body.analyzer #frame-no, body.analyzer #rate, body.analyzer 
   #an-plot { height: 60vh; flex: none; }
   .an-panel { padding: 0 10px 20px; overflow: visible; }
 }
+.wiring .w-wire, .wiring .w-part { stroke: var(--text); }
+#an-wiring-response[hidden], #an-wiring-impedance[hidden] { display: none; }
+.an-panel > .row { margin: 10px 0 8px; }
+#an-re-row .note { flex: 1; }
