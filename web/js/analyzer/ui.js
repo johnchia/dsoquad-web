@@ -4,19 +4,19 @@
 import { download, stamp } from '../export.js';
 import { logFreqs, MAX_HZ, MIN_HZ, planPoint, planSweep } from './sweep.js';
 import { measureDc, measureRangeGains, runSweep } from './run.js';
-import { curve, phaseCrossings, readouts, refineFreqs } from './response.js';
+import { curve, phaseCrossings, readouts, refineFreqs, valueAt } from './response.js';
 import { BodePlot } from './plot.js';
 import { DUTS } from './duts.js';
-import { cabs, carg, cx } from './detect.js';
+import { cabs, carg, cx, polar } from './detect.js';
 import * as Match from './match.js';
-import { coneArea, derive, fitDriver, fromVas, impedance, model, reFromDc, vasAddedMass, vasSealed } from './speaker.js';
+import { coneArea, fitDriver, fromVas, impedance, model, outputZ, reFromDc, vasAddedMass, vasSealed } from './speaker.js';
 import { driverResponse, frd, MIN_POINTS } from './frd.js';
 
 const $ = (id) => document.getElementById(id);
 const STORE_KEY = 'dsoq.analyzer.v1';
 const DEFAULTS = {
   mode: 'response', from: 20, to: 20000, ppd: 10, level: 90, settleMs: 0, average: 2, coupling: 0, refine: true,
-  applyMatch: true, R: 47, zFrom: 10, zTo: 20000, sim: 'rc', vasMethod: 'mass', coneCm: 13, massG: 10, boxL: 10,
+  applyMatch: true, R: 47, zFrom: 10, zTo: 20000, sim: 'rc', vasMethod: 'mass', coneCm: 13, massG: 10, boxL: 10, zoutOn: false, RL: 8,
 };
 const MODES = { response: 'Frequency response', impedance: 'Impedance' };
 const SIM_FOR = { response: 'rc', impedance: 'speaker' };
@@ -57,7 +57,7 @@ export function initAnalyzer(ctx) {
 
   const fields = {
     from: $('an-from'), to: $('an-to'), ppd: $('an-ppd'), level: $('an-level'), settleMs: $('an-settle'), average: $('an-average'), R: $('an-r'),
-    coneCm: $('an-cone'), massG: $('an-mass'), boxL: $('an-box'),
+    coneCm: $('an-cone'), massG: $('an-mass'), boxL: $('an-box'), RL: $('an-rl'),
   };
   const key = (k) => (s.mode === 'impedance' && (k === 'from' || k === 'to') ? (k === 'from' ? 'zFrom' : 'zTo') : k);
   const fillFields = () => { for (const [k, el] of Object.entries(fields)) el.value = s[key(k)]; };
@@ -65,7 +65,7 @@ export function initAnalyzer(ctx) {
     el.onchange = () => {
       let v = Number(el.value);
       if (k === 'from' || k === 'to') v = Math.round(Math.min(MAX_HZ, Math.max(MIN_HZ, v || DEFAULTS[key(k)])));
-      if (['R', 'coneCm', 'massG', 'boxL'].includes(k)) v = v > 0 ? v : DEFAULTS[k];
+      if (['R', 'coneCm', 'massG', 'boxL', 'RL'].includes(k)) v = v > 0 ? v : DEFAULTS[k];
       s[key(k)] = v; el.value = v;
       save(STORE_KEY, s);
       update();
@@ -76,6 +76,8 @@ export function initAnalyzer(ctx) {
   $('an-level').oninput();
   $('an-refine').checked = s.refine;
   $('an-refine').onchange = () => { s.refine = $('an-refine').checked; save(STORE_KEY, s); };
+  $('an-zout-on').checked = s.zoutOn;
+  $('an-zout-on').onchange = () => { s.zoutOn = $('an-zout-on').checked; save(STORE_KEY, s); update(); };
   $('an-apply-match').checked = s.applyMatch;
   $('an-apply-match').onchange = () => { s.applyMatch = $('an-apply-match').checked; save(STORE_KEY, s); update(); };
 
@@ -145,6 +147,26 @@ export function initAnalyzer(ctx) {
     } catch { return null; }
   }
 
+  /** Output impedance from the loaded sweep c and the unloaded reference (interpolated onto c). */
+  function zoutHtml(c, ref) {
+    const head = '<dt class="sep">Zout</dt>';
+    const z = c.filter((q) => q.f >= ref[0].f && q.f <= ref[ref.length - 1].f).map((q) => {
+      const h0 = polar(10 ** (valueAt(ref, q.f, 'gainDb') / 20), valueAt(ref, q.f, 'phaseDeg') * Math.PI / 180);
+      return { f: q.f, z: outputZ(h0, q.h, s.RL) };
+    });
+    if (!z.length) return `${head}<dd>the reference doesn't cover this sweep</dd>`;
+    const drop = z.reduce((a, q) => a + cabs(q.z), 0) / z.length;
+    if (drop < 1e-3 * s.RL) return `${head}<dd>now sweep with ${fmtOhm(s.RL)} across the output; this sweep and the reference are alike</dd>`;
+    const near = (f) => z.reduce((a, q) => (Math.abs(Math.log(q.f / f)) < Math.abs(Math.log(a.f / f)) ? q : a));
+    const at = [100, 1000, 10000].map(near).filter((q, i, a) => a.indexOf(q) === i);
+    const fmtZ = (q) => { const w = 2 * Math.PI * q.f, x = q.z.im; return `${cabs(q.z).toFixed(3)} Ω <span class="note">(${q.z.re.toFixed(3)} Ω ${x >= 0 ? `+ ${(x / w * 1e6).toFixed(1)} µH` : `− j${(-x).toFixed(3)} Ω`})</span>`; };
+    const k = near(1000), worst = z.reduce((a, q) => (cabs(q.z) > cabs(a.z) ? q : a));
+    return `${head}<dd>${fmtZ(at[0])} at ${fmtHz(at[0].f)}</dd>`
+      + at.slice(1).map((q) => `<dt></dt><dd>${fmtZ(q)} at ${fmtHz(q.f)}</dd>`).join('')
+      + `<dt>Highest</dt><dd>${cabs(worst.z).toFixed(3)} Ω at ${fmtHz(worst.f)}</dd>`
+      + `<dt>Damping</dt><dd>${(8 / cabs(k.z)).toFixed(0)} into 8 Ω at ${fmtHz(k.f)}</dd>`;
+  }
+
   /** Vas and the rest of the Thiele-Small set from this sweep's fit and the reference's: free air
    * against added mass (the free one has the higher fs) or a sealed box (the lower). */
   function vasHtml(a, b) {
@@ -195,6 +217,8 @@ export function initAnalyzer(ctx) {
     $('an-wiring-response').hidden = imp;
     $('an-wiring-impedance').hidden = !imp;
     for (const id of ['an-r-row', 'an-re-row', 'an-vas']) $(id).hidden = !imp;
+    $('an-zout').hidden = imp;
+    $('an-zout-body').hidden = !s.zoutOn;
     segSync('an-vas-method', s.vasMethod);
     $('an-mass-row').hidden = s.vasMethod !== 'mass';
     $('an-box-row').hidden = s.vasMethod !== 'box';
@@ -238,6 +262,7 @@ export function initAnalyzer(ctx) {
         <dt>−3 dB low</dt><dd>${Number.isFinite(q.lowF) ? fmtHz(q.lowF) : 'below the sweep'}</dd>
         <dt>−3 dB high</dt><dd>${Number.isFinite(q.highF) ? fmtHz(q.highF) : 'above the sweep'}</dd>
         ${[-45, 45].flatMap((d) => phaseCrossings(c, d).map((f) => `<dt>${d > 0 ? '+' : '−'}45° at</dt><dd>${fmtHz(f)} <span class="note">(fc of a 1st-order ${d < 0 ? 'low' : 'high'}-pass)</span></dd>`)).join('')}
+        ${s.zoutOn && ref.pts.length ? zoutHtml(c, points(ref)) : ''}
         <dt>Source THD</dt><dd>${Number.isFinite(thdMax) ? `≤ ${(100 * thdMax).toFixed(1)} % (the generator's own)` : '–'}</dd>` : '';
     } else if (c.length) {
       const lo = c.reduce((a, b) => (b.zAbs < a.zAbs ? b : a)), hi = c.reduce((a, b) => (b.zAbs > a.zAbs ? b : a));

@@ -179,6 +179,18 @@
           <div class="row buttons"><button id="an-start" class="primary">Start sweep</button></div>
           <div class="cal-progress"><progress id="an-progress" max="1" value="0"></progress><span id="an-msg"></span></div>
         </fieldset>
+        <fieldset id="an-zout">
+          <legend><label><input type="checkbox" id="an-zout-on"> Amplifier output impedance</label></legend>
+          <div id="an-zout-body">
+            <div class="row"><label for="an-rl">Load</label><input type="number" id="an-rl" min="0.1" step="any"><span class="unit">Ω (measure it)</span></div>
+            <p class="note">A on the amplifier's input, B on its output. Sweep with nothing on the output and press
+              Keep as reference; then put the load resistor (rated for the power) across the output and sweep
+              again. Zout = RL·(reference/now − 1). <b>Only for an output whose negative is ground:</b> a bridged
+              (BTL) output, as on most class-D amplifiers, is shorted through the probe's ground clip. B reads
+              up to ±40 V on 10 V/div; beyond that use a 10× probe on B (the gain then reads 20 dB low, which
+              doesn't change Zout).</p>
+          </div>
+        </fieldset>
         <fieldset id="an-vas">
           <legend>Vas (a second sweep)</legend>
           <div class="row"><label>Method</label><span class="seg" id="an-vas-method"><button value="mass">Added mass</button><button value="box">Sealed box</button></span></div>

@@ -1,6 +1,6 @@
 // Simulated devices under test for the analyzer: transfer functions from the generator (channel
 // A) to channel B. Used by the simulator and the tests. Pure.
-import { cdiv, cx } from './detect.js';
+import { cdiv, cmul, cx } from './detect.js';
 import { model, RHO_C2 } from './speaker.js';
 
 const jw = (f) => 2 * Math.PI * f;
@@ -20,6 +20,11 @@ export function driverVariant(p, { m = 0, Vb = 0, Mms = SIM_MMS, Sd = SIM_SD } =
   const fs = 1 / (2 * Math.PI * Math.sqrt(M * C));
   return { ...p, fs, Qms: p.Qms * (fs * M) / (p.fs * Mms) };
 }
+
+// A power amplifier (ground-referenced output): input coupling at 2 Hz, rolling off at 80 kHz,
+// and its output impedance, a resistance and the output inductor.
+export const SIM_AMP = { gain: 5, fc: 80e3, R: 0.2, L: 20e-6, RL: 8, zout: (f) => cx(SIM_AMP.R, jw(f) * SIM_AMP.L) };
+const ampH = (f) => cdiv(cx(0, SIM_AMP.gain * f / 2), cmul(cx(1, f / 2), cx(1, f / SIM_AMP.fc)));
 
 const behindR = (p) => (f) => { const z = model(p, f); return cdiv(z, cx(SIM_R + z.re, z.im)); };
 
@@ -45,6 +50,14 @@ export const DUTS = {
   speakerBox: {
     label: `The same loudspeaker in a ${SIM_BOX * 1e3} L sealed box`,
     h: behindR(driverVariant(SIM_DRIVER, { Vb: SIM_BOX })),
+  },
+  ampOpen: {
+    label: `Amplifier, ${SIM_AMP.gain}× (${Math.round(20 * Math.log10(SIM_AMP.gain))} dB), no load`,
+    h: (f) => ampH(f),
+  },
+  ampLoaded: {
+    label: `The same amplifier into ${SIM_AMP.RL} Ω (Zout ${SIM_AMP.R} Ω + ${SIM_AMP.L * 1e6} µH)`,
+    h: (f) => { const z = SIM_AMP.zout(f); return cmul(ampH(f), cdiv(cx(SIM_AMP.RL), cx(SIM_AMP.RL + z.re, z.im))); },
   },
 };
 

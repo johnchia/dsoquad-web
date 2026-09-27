@@ -8,12 +8,12 @@ import { SimTransport } from '../web/js/transport.js';
 import { logFreqs, planSweep } from '../web/js/analyzer/sweep.js';
 import { runSweep, pickRange } from '../web/js/analyzer/run.js';
 import { cabs, carg, cdiv } from '../web/js/analyzer/detect.js';
-import { DUTS, SIM_B_GAIN, SIM_BOX, SIM_DRIVER, SIM_MASS, SIM_MMS, SIM_R, SIM_SD } from '../web/js/analyzer/duts.js';
+import { DUTS, SIM_AMP, SIM_B_GAIN, SIM_BOX, SIM_DRIVER, SIM_MASS, SIM_MMS, SIM_R, SIM_SD } from '../web/js/analyzer/duts.js';
 import * as Match from '../web/js/analyzer/match.js';
-import { RHO_C2, fitDriver, fromVas, impedance, reFromDc, vasAddedMass, vasSealed } from '../web/js/analyzer/speaker.js';
+import { RHO_C2, fitDriver, fromVas, impedance, outputZ, reFromDc, vasAddedMass, vasSealed } from '../web/js/analyzer/speaker.js';
 import { measureDc, measureRangeGains } from '../web/js/analyzer/run.js';
 import { planPoint } from '../web/js/analyzer/sweep.js';
-import { cx } from '../web/js/analyzer/detect.js';
+import { csub, cx } from '../web/js/analyzer/detect.js';
 
 const RANGES = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10];
 
@@ -155,4 +155,14 @@ test('Vas: free air against added mass and against a sealed box', { timeout: 240
   assert.ok(Math.abs(vb / Vas - 1) < 0.02, `sealed box: ${vb * 1e3} L vs ${Vas * 1e3}`);
   const t = fromVas({ ...free, Vas: vm, Sd: SIM_SD });
   assert.ok(Math.abs(t.Mms / SIM_MMS - 1) < 0.01, `Mms ${t.Mms}`);
+});
+
+test('amplifier output impedance: unloaded against loaded sweeps', { timeout: 120000 }, async () => {
+  const freqs = logFreqs(20, 20000, 5);
+  const open = await sweep('ampOpen', freqs), loaded = await sweep('ampLoaded', freqs);
+  for (let i = 0; i < freqs.length; i++) {
+    const z = outputZ(open[i].h, loaded[i].h, SIM_AMP.RL), want = SIM_AMP.zout(open[i].f);
+    assert.equal(open[i].b.range, loaded[i].b.range);
+    assert.ok(cabs(csub(z, want)) < 0.01, `${open[i].f} Hz: ${z.re} + j${z.im} vs ${want.re} + j${want.im}`);
+  }
 });

@@ -175,3 +175,6 @@ export function fromVas({ Re, fs, Qms, Qes, Vas, Sd }) {
 
 /** Amplifier output impedance from the open-circuit and loaded output levels into RL. */
 export const outputImpedance = (vOpen, vLoad, RL) => RL * (vOpen / vLoad - 1);
+
+/** The same from complex gains (output/input) without and with the load: Zout = RL·(h0/hL − 1). */
+export const outputZ = (hOpen, hLoad, RL) => cmul(cx(RL), csub(cdiv(hOpen, hLoad), cx(1)));
