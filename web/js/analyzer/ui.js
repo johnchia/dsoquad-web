@@ -10,6 +10,7 @@ import { DUTS } from './duts.js';
 import { cabs, carg, cx } from './detect.js';
 import * as Match from './match.js';
 import { fitDriver, impedance, model, reFromDc } from './speaker.js';
+import { driverResponse, frd, MIN_POINTS } from './frd.js';
 
 const $ = (id) => document.getElementById(id);
 const STORE_KEY = 'dsoq.analyzer.v1';
@@ -91,6 +92,7 @@ export function initAnalyzer(ctx) {
   $('an-ref-set').onclick = () => { refs[s.mode] = structuredClone(runs[s.mode]); save(`${STORE_KEY}.refs`, refs); update(); };
   $('an-ref-clear').onclick = () => { refs[s.mode] = { pts: [], R: s.R }; save(`${STORE_KEY}.refs`, refs); update(); };
   $('an-csv').onclick = saveCsv;
+  $('an-frd').onclick = saveFrd;
   $('an-png').onclick = () => $('an-plot').toBlob((b) => download(b, `dsoquad-${s.mode}-${stamp()}.png`));
   $('an-match-measure').onclick = measureMatch;
   $('an-match-delete').onclick = deleteMatch;
@@ -192,7 +194,7 @@ export function initAnalyzer(ctx) {
     const c = r.pts.length ? points(r) : [];
     const series = [{ label: ref.pts.length ? 'Now' : '', pts: c }];
     if (ref.pts.length) series.push({ label: 'Ref', pts: points(ref), color: '#8b949e', dashed: true });
-    let markers = [], html;
+    let markers = [], html, fit = null;
     if (!imp) {
       const q = c.length >= 2 ? readouts(c) : null;
       if (q) markers = [{ f: q.lowF, label: `−3 dB ${fmtHz(q.lowF)}` }, { f: q.highF, label: `−3 dB ${fmtHz(q.highF)}` }].filter((m) => Number.isFinite(m.f));
@@ -205,7 +207,7 @@ export function initAnalyzer(ctx) {
         <dt>Source THD</dt><dd>${Number.isFinite(thdMax) ? `≤ ${(100 * thdMax).toFixed(1)} % (the generator's own)` : '–'}</dd>` : '';
     } else if (c.length) {
       const lo = c.reduce((a, b) => (b.zAbs < a.zAbs ? b : a)), hi = c.reduce((a, b) => (b.zAbs > a.zAbs ? b : a));
-      const fit = driverFit(c);
+      fit = driverFit(c);
       html = `<dt>|Z| min</dt><dd>${fmtOhm(lo.zAbs)} at ${fmtHz(lo.f)}</dd><dt>|Z| max</dt><dd>${fmtOhm(hi.zAbs)} at ${fmtHz(hi.f)}</dd>`;
       if (fit) {
         const { params: P, derived: D } = fit;
@@ -225,6 +227,11 @@ export function initAnalyzer(ctx) {
     }
     if (html && r.pts.some((x) => x.a.clip || x.b.clip)) html += '<dt>Clipped</dt><dd><span class="err">yes: some points are unreliable</span></dd>';
     $('an-readouts').innerHTML = html || '<dt>Results</dt><dd>–</dd>';
+    const frdWhy = frdProblem(r, fit);
+    $('an-frd').disabled = !!frdWhy;
+    $('an-frd').title = frdWhy || (imp
+      ? 'The driver\'s modelled response (infinite baffle, from the Thiele-Small fit) as an FRD file, for an equaliser such as esp32-airplay\'s "Fit to a measurement"'
+      : 'This sweep as an FRD file (frequency, dB, phase) for REW, VituixCAD or esp32-airplay\'s "Fit to a measurement"');
     const xs = [...r.pts, ...ref.pts].map((q) => q.f), from = s[key('from')], to = s[key('to')];
     plot.setData({ series, markers, f0: Math.min(from, to, ...xs), f1: Math.max(from, to, ...xs) });
   }
@@ -325,6 +332,34 @@ export function initAnalyzer(ctx) {
         ranges[q.a.range], ranges[q.b.range], q.spreadDb.toFixed(3), q.spreadDeg.toFixed(2), q.n, s.applyMatch && match ? 1 : 0].join(','));
     }
     download(new Blob([`${rows.join('\n')}\n`], { type: 'text/csv' }), `dsoquad-${s.mode}-${stamp()}.csv`);
+  }
+
+  /** Why the sweep can't be exported as an FRD file, or ''. */
+  function frdProblem(r, fit) {
+    if (!r.pts.length) return 'No sweep yet';
+    if (s.mode === 'impedance') return fit ? '' : 'Needs a driver fit: sweep across the speaker\'s resonance';
+    return r.pts.length < MIN_POINTS ? `Needs at least ${MIN_POINTS} points: sweep with more points per decade` : '';
+  }
+
+  /** FRD file: the measured B/A (with a microphone on B, a speaker's acoustic response), or in
+   * impedance mode the driver's response modelled from its Thiele-Small fit. */
+  function saveFrd() {
+    const r = runs[s.mode], c = points(r), when = `${new Date().toISOString().slice(0, 19).replace('T', ' ')} UTC`;
+    let rows, head;
+    if (s.mode === 'impedance') {
+      const { params: P, derived: D } = driverFit(c);
+      rows = driverResponse({ fs: P.fs, Qts: D.Qts });
+      head = [`DSO Quad: driver response modelled from an impedance sweep, ${when}`,
+        `Re ${P.Re.toFixed(3)} ohm, fs ${P.fs.toFixed(2)} Hz, Qms ${P.Qms.toFixed(3)}, Qes ${D.Qes.toFixed(4)}, Qts ${D.Qts.toFixed(4)}, Le ${(P.Le * 1e3).toFixed(3)} mH`,
+        'Small signal, voltage drive, infinite baffle (or a large sealed box): the low-frequency roll-off only.',
+        'Break-up, baffle step, directivity and the room are not in it: fit the EQ below a few times fs.'];
+    } else {
+      rows = c.map((q) => ({ f: q.f, db: q.gainDb, deg: q.phaseDeg }));
+      head = [`DSO Quad: frequency response B/A, ${when}`,
+        `Channel match ${s.applyMatch && match ? 'applied' : 'not applied'}; stepped sine at ${s.level} % level, ${s.coupling ? 'AC' : 'DC'} coupled`,
+        'For a speaker: A on the amplifier input, B on a measurement microphone\'s preamp (level is relative).'];
+    }
+    download(new Blob([frd(rows, head)], { type: 'text/plain' }), `dsoquad-${s.mode === 'impedance' ? 'driver-model' : 'response'}-${stamp()}.frd`);
   }
 
   setMode(s.mode);

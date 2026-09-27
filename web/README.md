@@ -52,6 +52,10 @@ by their tabs or anywhere along their lines.
   - **Channel match** (both probes on the wave out, ~30 s, stored on the DSO): the two channels'
     gain and phase difference per frequency, and every range's gain relative to the others, so
     results are right even when A and B sit on different ranges of an uncalibrated DSO.
+  - **EQ file (.frd):** frequency, dB and phase for REW, VituixCAD or esp32-airplay's *Fit to a
+    measurement*. In response mode it is the sweep itself, so with A on an amplifier's input and B
+    on a measurement microphone's preamp it is the speaker's acoustic response; in impedance mode
+    it is the driver's low-frequency roll-off modelled from the fit (fs, Qts; infinite baffle).
   - A dashed reference trace, CSV and PNG. In the simulator, pick a circuit (RC, RLC,
     loudspeaker behind 47 Ω). Hardware scripts: `tools/node/sweep.mjs`, `tools/node/match.mjs`.
 

@@ -115,8 +115,10 @@ test('range gains: the chain recovers the simulator\'s per-range gain errors', {
   for (let r = 0; r < 6; r++) {
     // Relative to A on range 3: A's and B's uncalibrated gains, and B's front end.
     const ga = db(sim.frontGain(0, r) / sim.frontGain(0, 3)), gb = db(sim.frontGain(1, r) * SIM_B_GAIN / sim.frontGain(0, 3));
-    assert.ok(Math.abs(m.ga[r] - ga) < 0.03, `A range ${r}: ${m.ga[r]} vs ${ga}`);
-    assert.ok(Math.abs(m.gb[r] - gb) < 0.03, `B range ${r}: ${m.gb[r]} vs ${gb}`);
+    // 2 V/div and up: the 1.2 V sine spans few codes (hardware repeats to ~0.05 dB there too).
+    const tol = r >= 5 ? 0.06 : 0.03;
+    assert.ok(Math.abs(m.ga[r] - ga) < tol, `A range ${r}: ${m.ga[r]} vs ${ga}`);
+    assert.ok(Math.abs(m.gb[r] - gb) < tol, `B range ${r}: ${m.gb[r]} vs ${gb}`);
   }
   const back = Match.decode(Match.encode(m));
   assert.ok(Math.abs(back.gb[2] - m.gb[2]) < 1e-4);

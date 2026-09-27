@@ -7,6 +7,7 @@ import { analogActual, planPoints } from '../web/js/wavegen.js';
 import { USABLE, captureDiv, logFreqs, planPoint, planSweep, rateForDiv } from '../web/js/analyzer/sweep.js';
 import { analyse, cabs, carg, cdiv, cx, polar } from '../web/js/analyzer/detect.js';
 import { curve, phaseCrossings, readouts, refineFreqs } from '../web/js/analyzer/response.js';
+import { driverResponse, frd, MIN_POINTS } from '../web/js/analyzer/frd.js';
 import { classical, coneArea, fitDriver, impedance, model, outputImpedance, reFromDc, vasAddedMass, vasSealed } from '../web/js/analyzer/speaker.js';
 
 const near = (a, b, rel, msg) => assert.ok(Math.abs(a - b) <= rel * Math.abs(b), `${msg}: ${a} vs ${b}`);
@@ -186,4 +187,35 @@ test('phase crossing: −45° is fc of a first-order low-pass, unaffected by a g
   const [f45] = phaseCrossings(c, -45);
   assert.ok(Math.abs(f45 / fc - 1) < 0.01, `−45° at ${f45}`);
   assert.ok(Math.abs(readouts(c).highF / fc - 1) > 0.015);   // while the −3 dB point moves
+});
+
+// esp32-airplay's importer (data/www/hf.html, parseResponse): the first two numbers of each line,
+// comment lines skipped, sorted, at least 16 points.
+function esp32Parse(text) {
+  const pt = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const ln = raw.trim();
+    if (!ln || '*#;%"\''.includes(ln.charAt(0))) continue;
+    const p = ln.split(/[\s,;]+/);
+    if (p.length < 2) continue;
+    const f = parseFloat(p[0]), d = parseFloat(p[1]);
+    if (Number.isFinite(f) && Number.isFinite(d) && f > 0) pt.push([f, d]);
+  }
+  return pt.length < 16 ? null : pt.sort((a, b) => a[0] - b[0]);
+}
+
+test('FRD export: the driver model is a 2nd-order high-pass at fs, Qts; esp32-airplay reads it', () => {
+  const rows = driverResponse({ fs: 48, Qts: 0.42 });
+  const at = (f) => rows.reduce((a, b) => (Math.abs(Math.log(b.f / f)) < Math.abs(Math.log(a.f / f)) ? b : a));
+  near(rows[0].f, 10, 1e-9, 'from'); near(rows[rows.length - 1].f, 20000, 1e-9, 'to');
+  assert.ok(Math.abs(at(1000).db) < 0.05, `passband ${at(1000).db}`);
+  const fsRow = driverResponse({ fs: 48, Qts: 0.42 }, 48, 96)[0];
+  near(fsRow.db, 20 * Math.log10(0.42), 1e-9, 'level at fs is Qts'); near(fsRow.deg, 90, 1e-9, 'phase at fs');
+  const low = driverResponse({ fs: 480, Qts: 0.42 }, 20, 40), oct = low[low.length - 1].db - low[0].db;
+  assert.ok(Math.abs(oct - 12) < 0.1, `slope ${oct} dB/octave`);     // 12 dB/octave well below fs
+  const parsed = esp32Parse(frd(rows, ['model', 'Re 5.6 ohm, fs 48 Hz']));
+  assert.equal(parsed.length, rows.length);
+  near(parsed[100][0], rows[100].f, 1e-6, 'f'); near(parsed[100][1], rows[100].db, 1e-3, 'dB');
+  assert.equal(esp32Parse(frd(rows.slice(0, MIN_POINTS - 1))), null);
+  assert.ok(esp32Parse(frd(rows.slice(0, MIN_POINTS))));
 });
