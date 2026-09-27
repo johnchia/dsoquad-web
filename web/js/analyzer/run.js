@@ -4,7 +4,7 @@
 import * as P from '../protocol.js';
 import * as Cal from '../calibration.js';
 import { table } from '../wavegen.js';
-import { analyse, cabs, carg, cdiv, clipped, cx } from './detect.js';
+import { added, addedFloor, analyse, cabs, carg, cdiv, clipped, cx, rss } from './detect.js';
 import { settleS } from './sweep.js';
 import { correct } from './match.js';
 
@@ -122,8 +122,9 @@ const meanRatio = (reads) => {
 /**
  * ctx: {dev, cal, ranges (V/div per range), amp (0..1), coupling (0 DC, 1 AC), match (match.js, or null)}
  * opts: {settle (s), average, tolDb, tolDeg}
- * Calls onPoint({freq, f, h, hRaw, a: {amp, dc, thd, range}, b: {...}, spreadDb, spreadDeg}) per
- * point and returns them all. h is B/A with ctx.match applied (if any), hRaw without. Stops
+ * Calls onPoint({freq, f, h, hRaw, a: {amp, dc, thd, range}, b: {..., thdAdded}, spreadDb, spreadDeg})
+ * per point and returns them all. A point's own `amp` (0..1) overrides ctx.amp (a level sweep).
+ * thdAdded: the THD B adds to A's (detect.js added), thdFloor: the noise floor under it. h is B/A with ctx.match applied (if any), hRaw without. Stops
  * with an AbortError when `signal` fires.
  */
 export async function runSweep(ctx, points, opts = {}, onPoint = () => {}, signal = null) {
@@ -141,7 +142,7 @@ export async function runSweep(ctx, points, opts = {}, onPoint = () => {}, signa
   const out = [];
   for (const plan of points) {
     signal?.throwIfAborted();
-    await startPoint(dev, plan, ctx.amp ?? 0.9);
+    await startPoint(dev, plan, plan.amp ?? ctx.amp ?? 0.9);
     const read = reader(ctx, plan, st, coupling, performance.now() + 1000 * settleS(plan.freq, opts.settle), signal);
 
     // 1. Ranges: until both channels show their signal well.
@@ -170,8 +171,13 @@ export async function runSweep(ctx, points, opts = {}, onPoint = () => {}, signa
       const m = (fn) => reads.reduce((s2, x) => s2 + fn(x[c]), 0) / reads.length;
       return { amp: m((x) => cabs(x.fund)), dc: m((x) => x.dc), thd: m((x) => x.thd), range: reads[0][c].range, clip: reads.some((x) => x[c].clip) };
     };
-    const a = summary(0), b = summary(1);
-    const p = { freq: plan.freq, f: plan.actual, h: correct(ctx.match, plan.actual, h, a.range, b.range), hRaw: h, a, b, spreadDb, spreadDeg, n: reads.length };
+    // Added THD: the harmonic vectors averaged over the readings (noise averages down), and the
+    // floor that noise leaves.
+    const ad = reads.map(([x, y]) => added(x, y));
+    const adMean = ad[0].map((_, i) => cx(ad.reduce((s2, v) => s2 + v[i].re, 0) / ad.length, ad.reduce((s2, v) => s2 + v[i].im, 0) / ad.length));
+    const floor = reads.reduce((s2, [x, y]) => s2 + addedFloor(x, y, plan.samples, reads.length), 0) / reads.length;
+    const a = summary(0), b = { ...summary(1), thdAdded: rss(adMean), thdFloor: floor };
+    const p = { freq: plan.freq, f: plan.actual, level: plan.amp ?? ctx.amp ?? 0.9, h: correct(ctx.match, plan.actual, h, a.range, b.range), hRaw: h, a, b, spreadDb, spreadDeg, n: reads.length };
     out.push(p);
     onPoint(p, out.length, points.length);
   }

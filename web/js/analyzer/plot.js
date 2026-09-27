@@ -1,5 +1,6 @@
-// Two stacked panes against log frequency (gain over phase, or |Z| over phase), with a hover
-// readout and markers. Knows nothing about devices; setData() gives it everything.
+// Two stacked panes against a log x axis (frequency, or output level): gain over phase, |Z| over
+// phase, gain over THD. Hover readout and markers. Knows nothing about devices; setData() gives
+// it everything.
 
 const C = {
   bg: '#0d1117', grid: '#2c3440', minor: '#1c232d', axis: '#8b949e', text: '#e6edf3',
@@ -26,7 +27,7 @@ export class BodePlot {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.panes = panes;
-    this.data = { series: [], markers: [], f0: 10, f1: 100000 };
+    this.data = { series: [], markers: [], f0: 10, f1: 100000, xUnit: 'Hz' };
     this.hoverF = null;
     new ResizeObserver(() => this.draw()).observe(canvas);
     canvas.addEventListener('pointermove', (e) => {
@@ -37,7 +38,8 @@ export class BodePlot {
     canvas.addEventListener('pointerleave', () => { this.hoverF = null; this.draw(); });
   }
 
-  /** series: [{label, pts, color?, dashed?}], markers: [{f, label}], f0/f1: the x range. */
+  /** series: [{label, pts, color?, dashed?}], markers: [{f, label}], f0/f1: the x range (log), xUnit
+   * its unit ('Hz' unless given). */
   setData(d) { this.data = { ...this.data, ...d }; this.draw(); }
 
   setPanes(panes) { this.panes = panes; this.draw(); }
@@ -144,9 +146,9 @@ export class BodePlot {
         x.strokeStyle = C.text; x.globalAlpha = 0.5; x.beginPath(); x.moveTo(px, top); x.lineTo(px, top + g.ph); x.stroke(); x.globalAlpha = 1;
         const parts = series.map((s, k) => {
           const v = BodePlot.at(s.pts, this.hoverF, pane.key);
-          return v === null ? null : { text: `${s.label ? `${s.label} ` : ''}${pane.fmt ? pane.fmt(v, true) : v.toPrecision(4)} ${pane.unit}`, color: s.color ?? C.series[k % C.series.length] };
+          return !Number.isFinite(v) ? null : { text: `${s.label ? `${s.label} ` : ''}${pane.fmt ? pane.fmt(v, true) : v.toPrecision(4)} ${pane.unit}`, color: s.color ?? C.series[k % C.series.length] };
         }).filter(Boolean);
-        const head = i === 0 ? `${fmtF(this.hoverF).replace(/k$/, " k").replace(/(\d)$/, "$1 ")}Hz  ` : '';
+        const head = i === 0 ? `${fmtF(this.hoverF).replace(/k$/, " k").replace(/(\d)$/, "$1 ")}${this.data.xUnit}  ` : '';
         let tx = g.x0 + 8;
         x.textAlign = 'left'; x.fillStyle = C.text; x.fillText(head, tx, top + g.ph - 8); tx += x.measureText(head).width;
         for (const p of parts) { x.fillStyle = p.color; x.fillText(p.text, tx, top + g.ph - 8); tx += x.measureText(p.text).width + 14; }

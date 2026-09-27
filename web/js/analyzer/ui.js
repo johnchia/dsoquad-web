@@ -1,6 +1,7 @@
-// The Analyzer view: frequency response (B/A) and impedance (Z = R·B/(A−B)) sweeps, the channel
-// match, wiring diagrams, plots, readouts and export. The app hands it the device and suspends
-// its own scope while the view is open.
+// The Analyzer view: frequency response (B/A), impedance (Z = R·B/(A−B)) and level (an
+// amplifier's gain and distortion against output) sweeps, the channel match, wiring diagrams,
+// plots, readouts and export. The app hands it the device and suspends its own scope while the
+// view is open.
 import { download, stamp } from '../export.js';
 import { logFreqs, MAX_HZ, MIN_HZ, planPoint, planSweep } from './sweep.js';
 import { measureDc, measureRangeGains, runSweep } from './run.js';
@@ -17,9 +18,12 @@ const STORE_KEY = 'dsoq.analyzer.v1';
 const DEFAULTS = {
   mode: 'response', from: 20, to: 20000, ppd: 10, level: 90, settleMs: 0, average: 2, coupling: 0, refine: true,
   applyMatch: true, R: 47, zFrom: 10, zTo: 20000, sim: 'rc', vasMethod: 'mass', coneCm: 13, massG: 10, boxL: 10, zoutOn: false, RL: 8,
+  lvlF: 1000, lvlFrom: 10, lvlTo: 100, lvlN: 16, lvlRL: 8,
 };
-const MODES = { response: 'Frequency response', impedance: 'Impedance' };
-const SIM_FOR = { response: 'rc', impedance: 'speaker' };
+const MODES = { response: 'Frequency response', impedance: 'Impedance', level: 'Level' };
+const SIM_FOR = { response: 'rc', impedance: 'speaker', level: 'ampClip' };
+// Simulated circuits that suit each mode (the loopback suits all).
+const SIM_SUITS = { response: (k) => !k.startsWith('speaker'), impedance: (k) => k.startsWith('speaker'), level: (k) => k.startsWith('amp') };
 
 const fmtHz = (f) => (!Number.isFinite(f) ? '–' : f >= 1e3 ? `${+(f / 1e3).toPrecision(4)} kHz` : `${+f.toPrecision(4)} Hz`);
 const fmtS = (s) => (s < 60 ? `${Math.ceil(s)} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`);
@@ -36,7 +40,10 @@ const PANES = {
   response: [{ label: 'Gain', unit: 'dB', key: 'gainDb', steps: [1, 2, 5, 10, 20], minSpan: 6, fmt: (v, hover) => (hover ? v.toFixed(2) : `${+v.toFixed(1)}`) }, PHASE],
   impedance: [{ label: '|Z|', unit: 'Ω', key: 'zAbs', steps: [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000], minSpan: 2, fmt: (v, hover) => (hover ? v.toPrecision(4) : `${+v.toPrecision(3)}`) },
     { ...PHASE, minSpan: 60 }],
+  level: [{ label: 'Gain', unit: 'dB', key: 'gainDb', steps: [0.1, 0.2, 0.5, 1, 2, 5, 10], minSpan: 1, fmt: (v, hover) => (hover ? v.toFixed(2) : `${+v.toFixed(1)}`) },
+    { label: 'THD added', unit: '%', key: 'thdPct', steps: [0.1, 0.2, 0.5, 1, 2, 5, 10, 20], minSpan: 1, fmt: (v, hover) => (hover ? v.toFixed(2) : `${+v.toFixed(1)}`) }],
 };
+const X_UNIT = { response: 'Hz', impedance: 'Hz', level: 'V rms' };
 
 /**
  * ctx: {getDev() → Device|null, getCal(), getRanges(), getSim() → SimTransport|null, toast(msg, kind)}
@@ -47,8 +54,8 @@ export function initAnalyzer(ctx) {
   let run = null;             // AbortController while sweeping
   let busy = '';              // what's running (for the status line)
   // Raw sweeps per mode ({pts, R} with pts' h = B/A without the match), and reference sweeps.
-  const runs = load(`${STORE_KEY}.runs`, { response: { pts: [] }, impedance: { pts: [], R: s.R, reDc: null } });
-  const refs = load(`${STORE_KEY}.refs`, { response: { pts: [] }, impedance: { pts: [], R: s.R } });
+  const runs = load(`${STORE_KEY}.runs`, { response: { pts: [] }, impedance: { pts: [], R: s.R, reDc: null }, level: { pts: [] } });
+  const refs = load(`${STORE_KEY}.refs`, { response: { pts: [] }, impedance: { pts: [], R: s.R }, level: { pts: [] } });
   let match = null;           // channel match from the device
   let open = false;
   const plot = new BodePlot($('an-plot'), PANES[s.mode]);
@@ -58,14 +65,17 @@ export function initAnalyzer(ctx) {
   const fields = {
     from: $('an-from'), to: $('an-to'), ppd: $('an-ppd'), level: $('an-level'), settleMs: $('an-settle'), average: $('an-average'), R: $('an-r'),
     coneCm: $('an-cone'), massG: $('an-mass'), boxL: $('an-box'), RL: $('an-rl'),
+    lvlF: $('an-lvl-f'), lvlFrom: $('an-lvl-from'), lvlTo: $('an-lvl-to'), lvlN: $('an-lvl-n'), lvlRL: $('an-lvl-rl'),
   };
   const key = (k) => (s.mode === 'impedance' && (k === 'from' || k === 'to') ? (k === 'from' ? 'zFrom' : 'zTo') : k);
   const fillFields = () => { for (const [k, el] of Object.entries(fields)) el.value = s[key(k)]; };
   for (const [k, el] of Object.entries(fields)) {
     el.onchange = () => {
       let v = Number(el.value);
-      if (k === 'from' || k === 'to') v = Math.round(Math.min(MAX_HZ, Math.max(MIN_HZ, v || DEFAULTS[key(k)])));
-      if (['R', 'coneCm', 'massG', 'boxL', 'RL'].includes(k)) v = v > 0 ? v : DEFAULTS[k];
+      if (k === 'from' || k === 'to' || k === 'lvlF') v = Math.round(Math.min(MAX_HZ, Math.max(MIN_HZ, v || DEFAULTS[key(k)])));
+      if (['R', 'coneCm', 'massG', 'boxL', 'RL', 'lvlRL'].includes(k)) v = v > 0 ? v : DEFAULTS[k];
+      if (k === 'lvlFrom' || k === 'lvlTo') v = Math.round(Math.min(100, Math.max(5, v || DEFAULTS[k])));
+      if (k === 'lvlN') v = Math.round(Math.min(40, Math.max(3, v || DEFAULTS[k])));
       s[key(k)] = v; el.value = v;
       save(STORE_KEY, s);
       update();
@@ -107,8 +117,7 @@ export function initAnalyzer(ctx) {
     if (run || !MODES[m]) return;
     s.mode = m;
     // In the simulator, switch to a circuit that suits the mode.
-    const suits = s.sim === 'through' || (m === 'impedance') === s.sim.startsWith('speaker');
-    if (ctx.getSim() && SIM_FOR[m] && !suits) { s.sim = SIM_FOR[m]; simSel.value = s.sim; applySim(); }
+    if (ctx.getSim() && s.sim !== 'through' && !SIM_SUITS[m](s.sim)) { s.sim = SIM_FOR[m]; simSel.value = s.sim; applySim(); }
     save(STORE_KEY, s);
     plot.setPanes(PANES[m]);
     fillFields();
@@ -122,6 +131,11 @@ export function initAnalyzer(ctx) {
 
   /** Plot points for a sweep in the current mode. */
   function points(r) {
+    if (s.mode === 'level') {
+      // x: B's output in V rms; gain and the THD B adds to the generator's.
+      return r.pts.map((p) => ({ ...p, hz: p.f, f: p.b.amp / Math.SQRT2, gainDb: 20 * Math.log10(cabs(hOf(p))), thdPct: 100 * p.b.thdAdded, floorPct: 100 * (p.b.thdFloor ?? NaN) }))
+        .sort((a, b) => a.f - b.f);
+    }
     const c = curve(r.pts.map((p) => ({ ...p, h: hOf(p) })));
     if (s.mode !== 'impedance') return c;
     let prev = null, turns = 0;
@@ -145,6 +159,29 @@ export function initAnalyzer(ctx) {
       const fit = fitDriver(c.map((q) => ({ f: q.f, z: q.z })), { Re: runs.impedance.reDc ?? undefined });
       return Number.isFinite(fit.params.fs) && fit.rms < 0.2 ? fit : null;
     } catch { return null; }
+  }
+
+  /** Level sweep readouts: gain, compression, added THD, and where it reaches 1 % (the power
+   * rating's usual limit) with the output power into the load. */
+  function levelHtml(c, r) {
+    const lo = c[0], hi = c[c.length - 1], P = (v) => v * v / s.lvlRL;
+    const fmtW = (w) => (w >= 1 ? `${w.toFixed(w < 10 ? 2 : 1)} W` : `${(w * 1e3).toFixed(w < 0.01 ? 2 : 0)} mW`);
+    let at1 = null;
+    for (let i = 1; i < c.length && at1 === null; i++) {
+      const a = c[i - 1], b = c[i];
+      if (a.thdPct < 1 && b.thdPct >= 1) at1 = a.f * (b.f / a.f) ** ((Math.log(1) - Math.log(a.thdPct)) / (Math.log(b.thdPct) - Math.log(a.thdPct)));
+    }
+    if (at1 === null && lo.thdPct >= 1) at1 = NaN;
+    const genThd = Math.max(...r.pts.map((x) => x.a.thd).filter(Number.isFinite));
+    return `
+      <dt>At</dt><dd>${fmtHz(lo.freq)}, ${fmtOhm(s.lvlRL)} load</dd>
+      <dt>Gain</dt><dd>${lo.gainDb.toFixed(2)} dB at ${lo.f.toPrecision(3)} V rms out</dd>
+      <dt>Compression</dt><dd>${(hi.gainDb - lo.gainDb).toFixed(2)} dB at ${hi.f.toPrecision(3)} V rms out</dd>
+      <dt>THD added</dt><dd>${lo.thdPct.toFixed(2)} % at the lowest level, ${hi.thdPct.toFixed(2)} % at the highest</dd>
+      <dt>Floor</dt><dd>noise ${Math.min(...c.map((q) => q.floorPct)).toFixed(2)}–${Math.max(...c.map((q) => q.floorPct)).toFixed(2)} % (dashed); on top of that the two 8-bit ADCs distort differently by 0.1–0.7 % (measured through a flat path, worst on small signals), so below about 1 % read it as clean</dd>
+      <dt>1 % THD</dt><dd>${at1 === null ? `not reached: up to ${hi.f.toPrecision(3)} V rms, ${fmtW(P(hi.f))}`
+        : Number.isNaN(at1) ? 'already over 1 % at the lowest level' : `${at1.toPrecision(3)} V rms out, ${fmtW(P(at1))} into ${fmtOhm(s.lvlRL)}`}</dd>
+      <dt>Source THD</dt><dd>${Number.isFinite(genThd) ? `${(100 * genThd).toFixed(1)} % (the generator's own; taken out above)` : '–'}</dd>`;
   }
 
   /** Output impedance from the loaded sweep c and the unloaded reference (interpolated onto c). */
@@ -203,13 +240,25 @@ export function initAnalyzer(ctx) {
 
   // ---------------------------------------------------------------- view
 
+  /** Generator levels (0..1) of a level sweep, log spaced. */
+  const levels = () => {
+    const a = Math.min(s.lvlFrom, s.lvlTo) / 100, b = Math.max(s.lvlFrom, s.lvlTo) / 100, n = s.lvlN;
+    return Array.from({ length: n }, (_, i) => a * (b / a) ** (i / (n - 1)));
+  };
+
   function plan() {
+    if (s.mode === 'level') {
+      const one = planSweep([s.lvlF], { settle: s.settleMs / 1000, average: s.average });
+      if (!one.points.length) return { points: [], seconds: 0 };
+      const ls = levels();
+      return { points: ls.map((amp) => ({ ...one.points[0], amp })), seconds: one.seconds * ls.length };
+    }
     const from = s[key('from')], to = s[key('to')];
     return planSweep(logFreqs(Math.min(from, to), Math.max(from, to), s.ppd), { settle: s.settleMs / 1000, average: s.average });
   }
 
   function update() {
-    const dev = ctx.getDev(), imp = s.mode === 'impedance';
+    const dev = ctx.getDev(), imp = s.mode === 'impedance', lvl = s.mode === 'level';
     const p = plan();
     segSync('an-mode', s.mode);
     segSync('an-coupling', s.coupling);
@@ -217,7 +266,10 @@ export function initAnalyzer(ctx) {
     $('an-wiring-response').hidden = imp;
     $('an-wiring-impedance').hidden = !imp;
     for (const id of ['an-r-row', 'an-re-row', 'an-vas']) $(id).hidden = !imp;
-    $('an-zout').hidden = imp;
+    $('an-zout').hidden = imp || lvl;
+    for (const id of ['an-from-row', 'an-to-row', 'an-ppd-row', 'an-level-row', 'an-refine-row']) $(id).hidden = lvl;
+    $('an-lvl-rows').hidden = !lvl;
+    $('an-level-note').hidden = !lvl;
     $('an-zout-body').hidden = !s.zoutOn;
     segSync('an-vas-method', s.vasMethod);
     $('an-mass-row').hidden = s.vasMethod !== 'mass';
@@ -253,7 +305,11 @@ export function initAnalyzer(ctx) {
     const series = [{ label: ref.pts.length ? 'Now' : '', pts: c }];
     if (ref.pts.length) series.push({ label: 'Ref', pts: points(ref), color: '#8b949e', dashed: true });
     let markers = [], html, fit = null;
-    if (!imp) {
+    if (lvl) {
+      html = c.length ? levelHtml(c, r) : '';
+      if (c.some((q) => Number.isFinite(q.floorPct))) series.push({ label: 'Noise', pts: c.map((q) => ({ f: q.f, thdPct: q.floorPct })), color: '#6e7681', dashed: true });
+    }
+    else if (!imp) {
       const q = c.length >= 2 ? readouts(c) : null;
       if (q) markers = [{ f: q.lowF, label: `−3 dB ${fmtHz(q.lowF)}` }, { f: q.highF, label: `−3 dB ${fmtHz(q.highF)}` }].filter((m) => Number.isFinite(m.f));
       const thdMax = c.length ? Math.max(...r.pts.map((x) => x.a.thd).filter(Number.isFinite)) : NaN;
@@ -292,8 +348,14 @@ export function initAnalyzer(ctx) {
     $('an-frd').title = frdWhy || (imp
       ? 'The driver\'s modelled response (infinite baffle, from the Thiele-Small fit) as an FRD file, for an equaliser such as esp32-airplay\'s "Fit to a measurement"'
       : 'This sweep as an FRD file (frequency, dB, phase) for REW, VituixCAD or esp32-airplay\'s "Fit to a measurement"');
+    if (lvl) {
+      const xs = [...c, ...(ref.pts.length ? points(ref) : [])].map((q) => q.f).filter((x) => x > 0);
+      const x0 = xs.length ? Math.min(...xs) / 1.2 : 0.1, x1 = xs.length ? Math.max(...xs) * 1.2 : 10;
+      plot.setData({ series, markers, f0: x0, f1: x1, xUnit: X_UNIT.level });
+      return;
+    }
     const xs = [...r.pts, ...ref.pts].map((q) => q.f), from = s[key('from')], to = s[key('to')];
-    plot.setData({ series, markers, f0: Math.min(from, to, ...xs), f1: Math.max(from, to, ...xs) });
+    plot.setData({ series, markers, f0: Math.min(from, to, ...xs), f1: Math.max(from, to, ...xs), xUnit: X_UNIT[s.mode] });
   }
 
   const msg = (t) => { $('an-msg').textContent = t; };
@@ -333,7 +395,7 @@ export function initAnalyzer(ctx) {
         await runSweep(sweepCtx(dev), pl, opts, (p, i, n) => { add(p); prog.value = i; msg(`${i} / ${n}: ${fmtHz(p.f)}`); }, signal);
         // Refine: more points where readouts are interpolated (−3 dB or √r0 points, the peak).
         const c = points(r);
-        const extra = s.refine && c.length >= 3 ? planSweep(refineFreqs(c, refineReadouts(c))).points : [];
+        const extra = s.refine && mode !== 'level' && c.length >= 3 ? planSweep(refineFreqs(c, refineReadouts(c))).points : [];
         if (extra.length) {
           prog.max = pl.length + extra.length;
           await runSweep(sweepCtx(dev), extra, opts, (p, i, n) => { add(p); prog.value = pl.length + i; msg(`Refining ${i} / ${n}: ${fmtHz(p.f)}`); }, signal);
@@ -380,15 +442,15 @@ export function initAnalyzer(ctx) {
 
   function saveCsv() {
     const c = points(runs[s.mode]), ranges = ctx.getRanges();
-    const head = s.mode === 'impedance'
-      ? ['freq_set_hz', 'freq_hz', 'z_ohm', 'z_phase_deg', 'z_re_ohm', 'z_im_ohm']
-      : ['freq_set_hz', 'freq_hz', 'gain_vv', 'gain_db', 'phase_deg'];
+    const head = s.mode === 'impedance' ? ['freq_set_hz', 'freq_hz', 'z_ohm', 'z_phase_deg', 'z_re_ohm', 'z_im_ohm']
+      : s.mode === 'level' ? ['freq_set_hz', 'freq_hz', 'level_pct', 'out_vrms', 'gain_db', 'thd_added_pct', `power_w_${s.lvlRL}ohm`]
+        : ['freq_set_hz', 'freq_hz', 'gain_vv', 'gain_db', 'phase_deg'];
     const rows = [[...head, 'a_vpk', 'b_vpk', 'a_thd_pct', 'b_thd_pct', 'a_vdiv', 'b_vdiv', 'spread_db', 'spread_deg', 'readings', 'match_applied'].join(',')];
     for (const q of c) {
-      const main = s.mode === 'impedance'
-        ? [q.zAbs.toPrecision(6), q.phaseDeg.toFixed(2), q.z.re.toPrecision(6), q.z.im.toPrecision(6)]
-        : [q.gain.toPrecision(6), q.gainDb.toFixed(3), q.phaseDeg.toFixed(2)];
-      rows.push([q.freq, q.f.toPrecision(8), ...main, q.a.amp.toPrecision(5), q.b.amp.toPrecision(5), (100 * q.a.thd).toFixed(2), (100 * q.b.thd).toFixed(2),
+      const main = s.mode === 'impedance' ? [q.zAbs.toPrecision(6), q.phaseDeg.toFixed(2), q.z.re.toPrecision(6), q.z.im.toPrecision(6)]
+        : s.mode === 'level' ? [(100 * q.level).toFixed(1), q.f.toPrecision(5), q.gainDb.toFixed(3), q.thdPct.toFixed(3), (q.f * q.f / s.lvlRL).toPrecision(4)]
+          : [q.gain.toPrecision(6), q.gainDb.toFixed(3), q.phaseDeg.toFixed(2)];
+      rows.push([q.freq, (q.hz ?? q.f).toPrecision(8), ...main, q.a.amp.toPrecision(5), q.b.amp.toPrecision(5), (100 * q.a.thd).toFixed(2), (100 * q.b.thd).toFixed(2),
         ranges[q.a.range], ranges[q.b.range], q.spreadDb.toFixed(3), q.spreadDeg.toFixed(2), q.n, s.applyMatch && match ? 1 : 0].join(','));
     }
     download(new Blob([`${rows.join('\n')}\n`], { type: 'text/csv' }), `dsoquad-${s.mode}-${stamp()}.csv`);
@@ -397,6 +459,7 @@ export function initAnalyzer(ctx) {
   /** Why the sweep can't be exported as an FRD file, or ''. */
   function frdProblem(r, fit) {
     if (!r.pts.length) return 'No sweep yet';
+    if (s.mode === 'level') return 'Only for frequency sweeps';
     if (s.mode === 'impedance') return fit ? '' : 'Needs a driver fit: sweep across the speaker\'s resonance';
     return r.pts.length < MIN_POINTS ? `Needs at least ${MIN_POINTS} points: sweep with more points per decade` : '';
   }

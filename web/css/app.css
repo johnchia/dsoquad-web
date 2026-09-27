@@ -300,3 +300,4 @@ body.analyzer #fps, body.analyzer #frame-no, body.analyzer #rate, body.analyzer 
 #an-wiring-response[hidden], #an-wiring-impedance[hidden] { display: none; }
 .an-panel > .row { margin: 10px 0 8px; }
 #an-re-row .note { flex: 1; }
+#an-lvl-from, #an-lvl-to { width: 5.5em; }

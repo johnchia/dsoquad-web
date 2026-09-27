@@ -166,3 +166,14 @@ test('amplifier output impedance: unloaded against loaded sweeps', { timeout: 12
     assert.ok(cabs(csub(z, want)) < 0.01, `${open[i].f} Hz: ${z.re} + j${z.im} vs ${want.re} + j${want.im}`);
   }
 });
+
+test('level sweep: gain and added THD of a clipping amplifier; the floor under a clean one', { timeout: 120000 }, async () => {
+  const one = planSweep([1000]).points[0], levels = [0.1, 0.3, 0.6, 1];
+  const pts = await withSim('ampClip', (dev) => runSweep({ dev, cal: simCal(), ranges: RANGES }, levels.map((amp) => ({ ...one, amp })), { average: 4 }));
+  assert.deepEqual(pts.map((p) => p.level), levels);
+  const db = pts.map((p) => 20 * Math.log10(cabs(p.h)));
+  assert.ok(Math.abs(db[0] - 20 * Math.log10(SIM_AMP.gain)) < 0.1, `small-signal gain ${db[0]}`);
+  assert.ok(pts[0].b.thdAdded < 3 * pts[0].b.thdFloor + 1e-3, `clean at 10 %: ${pts[0].b.thdAdded} (floor ${pts[0].b.thdFloor})`);
+  assert.ok(pts[3].b.thdAdded > 0.05 && db[0] - db[3] > 1, `clipping at 100 %: ${pts[3].b.thdAdded}, ${db[0] - db[3]} dB`);
+  assert.ok(pts[0].b.thdFloor > 0 && pts[0].b.thdFloor < 0.005, `floor ${pts[0].b.thdFloor}`);
+});

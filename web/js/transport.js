@@ -320,7 +320,8 @@ export class SimTransport extends VirtualTransport {
       const ph = 2 * Math.PI * g.f * (t - SIM_B_DELAY);
       // Output phasor: H·(re + j·im); the signal is Re{phasor·e^{jωt}}.
       const re = h.re * g.re - h.im * g.im, im = h.re * g.im + h.im * g.re;
-      return SIM_B_GAIN * (h0 * g.dc + re * Math.cos(ph) - im * Math.sin(ph));
+      const v = h0 * g.dc + re * Math.cos(ph) - im * Math.sin(ph);
+      return SIM_B_GAIN * (dut.out ? dut.out(v) : v);
     }
     return 1.5 * Math.sin(2 * Math.PI * 2700 * t) + 0.3 * Math.sin(2 * Math.PI * 8100 * t);
   }

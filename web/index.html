@@ -110,7 +110,7 @@
     <section class="an-view" id="analyzer" hidden>
       <div class="an-plot"><canvas id="an-plot"></canvas></div>
       <div class="an-panel">
-        <div class="row"><span class="seg wide" id="an-mode"><button value="response">Frequency response</button><button value="impedance">Impedance</button></span></div>
+        <div class="row"><span class="seg wide" id="an-mode"><button value="response">Frequency response</button><button value="impedance">Impedance</button><button value="level">Level</button></span></div>
         <fieldset>
           <legend id="an-mode-legend">Frequency response</legend>
           <div id="an-wiring-response">
@@ -130,6 +130,12 @@
               <text x="20" y="115" class="lbl">all grounds together (wave out, A, B, circuit)</text>
             </svg>
             <p class="note">Wave out drives the circuit's input; probe A on the input, B on the output. Result: B / A.</p>
+            <p class="note" id="an-level-note">Level: the generator steps its amplitude at one frequency, for an amplifier's gain and
+              distortion up to clipping (turn its volume up so it clips inside the range). THD is what B adds to A's:
+              the generator's own 0.2–1.8 % is taken out, assuming the amplifier is flat to the 5th harmonic;
+              what's left of the DSO's own is 0.1–0.7 %, so it finds clipping and the 1 % point, not a clean
+              amplifier's distortion. B's
+              ground clip must go to a grounded output (not a bridged class-D one); ±40 V at most on 10 V/div.</p>
           </div>
           <div id="an-wiring-impedance" hidden>
             <svg class="wiring" viewBox="0 0 300 130" role="img" aria-label="Wiring: wave out, optional capacitor, probe A, series resistor R, probe B, the device to ground">
@@ -164,15 +170,21 @@
         </fieldset>
         <fieldset>
           <legend>Sweep</legend>
-          <div class="row"><label for="an-from">From</label><input type="number" id="an-from" min="1" max="125000" step="1"><span class="unit">Hz</span></div>
-          <div class="row"><label for="an-to">To</label><input type="number" id="an-to" min="1" max="125000" step="1"><span class="unit">Hz</span></div>
+          <div class="row" id="an-from-row"><label for="an-from">From</label><input type="number" id="an-from" min="1" max="125000" step="1"><span class="unit">Hz</span></div>
+          <div class="row" id="an-to-row"><label for="an-to">To</label><input type="number" id="an-to" min="1" max="125000" step="1"><span class="unit">Hz</span></div>
+          <div id="an-lvl-rows">
+            <div class="row"><label for="an-lvl-f">Frequency</label><input type="number" id="an-lvl-f" min="1" max="125000" step="1"><span class="unit">Hz</span></div>
+            <div class="row"><label for="an-lvl-from">Levels</label><input type="number" id="an-lvl-from" min="5" max="100" step="1"><span class="unit">to</span><input type="number" id="an-lvl-to" min="5" max="100" step="1"><span class="unit">%</span></div>
+            <div class="row"><label for="an-lvl-n">Steps</label><input type="number" id="an-lvl-n" min="3" max="40" step="1"></div>
+            <div class="row"><label for="an-lvl-rl">Load</label><input type="number" id="an-lvl-rl" min="0.1" step="any"><span class="unit">Ω (for the power)</span></div>
+          </div>
           <div class="row" id="an-r-row"><label for="an-r">R</label><input type="number" id="an-r" min="0.1" step="any"><span class="unit">Ω</span></div>
           <div class="row" id="an-re-row"><label>Re at DC</label><span id="an-re-value" class="note"></span><button id="an-re-dc" title="Two DC levels through R: only without a capacitor">Measure</button><button id="an-re-clear" title="Fit Re from the sweep instead">×</button></div>
-          <div class="row"><label for="an-ppd">Points</label><select id="an-ppd"><option value="5">5 per decade</option><option value="10">10 per decade</option><option value="20">20 per decade</option><option value="40">40 per decade</option></select></div>
-          <div class="row"><label for="an-level">Level</label><input type="range" id="an-level" min="10" max="100" step="5"><output id="an-level-out"></output></div>
+          <div class="row" id="an-ppd-row"><label for="an-ppd">Points</label><select id="an-ppd"><option value="5">5 per decade</option><option value="10">10 per decade</option><option value="20">20 per decade</option><option value="40">40 per decade</option></select></div>
+          <div class="row" id="an-level-row"><label for="an-level">Level</label><input type="range" id="an-level" min="10" max="100" step="5"><output id="an-level-out"></output></div>
           <div class="row"><label for="an-average">Readings</label><select id="an-average"><option value="1">1 per point</option><option value="2">2 per point</option><option value="4">4 per point</option><option value="8">8 per point</option></select></div>
           <div class="row"><label for="an-settle">Settle</label><input type="number" id="an-settle" min="0" max="60000" step="10"><span class="unit">ms extra</span></div>
-          <div class="row"><label for="an-refine">Refine</label><label class="check" title="After the sweep, measure extra points around the −3 dB points (or the speaker's √r0 points) and the peak"><input type="checkbox" id="an-refine"> extra points around the readouts</label></div>
+          <div class="row" id="an-refine-row"><label for="an-refine">Refine</label><label class="check" title="After the sweep, measure extra points around the −3 dB points (or the speaker's √r0 points) and the peak"><input type="checkbox" id="an-refine"> extra points around the readouts</label></div>
           <div class="row"><label>Coupling</label><span class="seg" id="an-coupling"><button value="0">DC</button><button value="1">AC</button></span></div>
           <div class="row" id="an-sim-row"><label for="an-sim">Simulated</label><select id="an-sim"></select></div>
           <div class="row note"><label></label><span id="an-estimate"></span></div>

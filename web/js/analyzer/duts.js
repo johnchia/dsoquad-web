@@ -1,5 +1,5 @@
 // Simulated devices under test for the analyzer: transfer functions from the generator (channel
-// A) to channel B. Used by the simulator and the tests. Pure.
+// A) to channel B, and optionally a static non-linearity `out(v)` on B's voltage. Used by the simulator and the tests. Pure.
 import { cdiv, cmul, cx } from './detect.js';
 import { model, RHO_C2 } from './speaker.js';
 
@@ -54,6 +54,12 @@ export const DUTS = {
   ampOpen: {
     label: `Amplifier, ${SIM_AMP.gain}× (${Math.round(20 * Math.log10(SIM_AMP.gain))} dB), no load`,
     h: (f) => ampH(f),
+  },
+  ampClip: {
+    // Clips at 4 V peak with a sharp knee: out = v / (1 + |v/Vc|^6)^(1/6).
+    label: `Amplifier, ${SIM_AMP.gain}×, clipping at 4 V peak (for level sweeps)`,
+    h: (f) => ampH(f),
+    out: (v) => v / (1 + Math.abs(v / 4) ** 6) ** (1 / 6),
   },
   ampLoaded: {
     label: `The same amplifier into ${SIM_AMP.RL} Ω (Zout ${SIM_AMP.R} Ω + ${SIM_AMP.L * 1e6} µH)`,

@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import * as P from '../web/js/protocol.js';
 import { analogActual, planPoints } from '../web/js/wavegen.js';
 import { USABLE, captureDiv, logFreqs, planPoint, planSweep, rateForDiv } from '../web/js/analyzer/sweep.js';
-import { analyse, cabs, carg, cdiv, cx, polar } from '../web/js/analyzer/detect.js';
+import { addedThd, analyse, cabs, carg, cdiv, cx, polar } from '../web/js/analyzer/detect.js';
 import { curve, phaseCrossings, readouts, refineFreqs } from '../web/js/analyzer/response.js';
 import { driverResponse, frd, MIN_POINTS } from '../web/js/analyzer/frd.js';
 import { classical, coneArea, fitDriver, impedance, model, outputImpedance, reFromDc, vasAddedMass, vasSealed } from '../web/js/analyzer/speaker.js';
@@ -218,4 +218,18 @@ test('FRD export: the driver model is a 2nd-order high-pass at fs, Qts; esp32-ai
   near(parsed[100][0], rows[100].f, 1e-6, 'f'); near(parsed[100][1], rows[100].db, 1e-3, 'dB');
   assert.equal(esp32Parse(frd(rows.slice(0, MIN_POINTS - 1))), null);
   assert.ok(esp32Parse(frd(rows.slice(0, MIN_POINTS))));
+});
+
+test('added THD: the generator\'s own harmonics cancel through a flat, delayed (or inverting) gain', () => {
+  const K = 4000, M = 10, w = 2 * Math.PI * M / K;
+  const gen = [[1, 0.3], [0.012, 1.1], [0.008, -0.4]];   // fundamental, H2, H3: 1.4 % THD
+  const rec = (tones) => Float64Array.from({ length: K }, (_, k) => tones.reduce((s, [h, a, ph]) => s + a * Math.cos(h * w * k + ph), 0));
+  const A = analyse(rec(gen.map(([a, ph], i) => [i + 1, a, ph])), 0, K, M);
+  for (const [G, delay] of [[5, 0.2], [-5, 0.15]]) {
+    const through = gen.map(([a, ph], i) => [i + 1, G * a, ph - (i + 1) * delay]);
+    const B0 = analyse(rec(through), 0, K, M);
+    assert.ok(B0.thd > 0.013 && addedThd(A, B0) < 1e-6, `gain ${G}: ${addedThd(A, B0)}`);
+    const B1 = analyse(rec([...through, [3, Math.abs(G) * 0.005, 2]]), 0, K, M);   // the amplifier adds 0.5 % H3
+    near(addedThd(A, B1), 0.005, 1e-6, `added H3, gain ${G}`);
+  }
 });
