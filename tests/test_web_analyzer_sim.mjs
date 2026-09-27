@@ -8,9 +8,9 @@ import { SimTransport } from '../web/js/transport.js';
 import { logFreqs, planSweep } from '../web/js/analyzer/sweep.js';
 import { runSweep, pickRange } from '../web/js/analyzer/run.js';
 import { cabs, carg, cdiv } from '../web/js/analyzer/detect.js';
-import { DUTS, SIM_B_GAIN, SIM_DRIVER, SIM_R } from '../web/js/analyzer/duts.js';
+import { DUTS, SIM_B_GAIN, SIM_BOX, SIM_DRIVER, SIM_MASS, SIM_MMS, SIM_R, SIM_SD } from '../web/js/analyzer/duts.js';
 import * as Match from '../web/js/analyzer/match.js';
-import { fitDriver, impedance, reFromDc } from '../web/js/analyzer/speaker.js';
+import { RHO_C2, fitDriver, fromVas, impedance, reFromDc, vasAddedMass, vasSealed } from '../web/js/analyzer/speaker.js';
 import { measureDc, measureRangeGains } from '../web/js/analyzer/run.js';
 import { planPoint } from '../web/js/analyzer/sweep.js';
 import { cx } from '../web/js/analyzer/detect.js';
@@ -139,4 +139,20 @@ test('loudspeaker behind R, uncalibrated DSO: channel match with range gains, im
   const [[a1, b1], [a2, b2]] = dc.levels, k = cabs(Match.ratio(m, 0, ...dc.ranges));
   const re = reFromDc(a1, b1 / k, a2, b2 / k, SIM_R);
   assert.ok(Math.abs(re / SIM_DRIVER.Re - 1) < 0.02, `Re at DC ${re}`);
+});
+
+test('Vas: free air against added mass and against a sealed box', { timeout: 240000 }, async () => {
+  const fit = async (dut) => {
+    const pts = await sweep(dut, logFreqs(10, 1000, 20), {}, { cal: simCal() });
+    const f = fitDriver(pts.map((p) => ({ f: p.f, z: impedance(cx(1), p.h, SIM_R) })));
+    return { ...f.params, Qes: f.derived.Qes };
+  };
+  const free = await fit('speaker'), mass = await fit('speakerMass'), box = await fit('speakerBox');
+  const Vas = RHO_C2 * SIM_SD ** 2 / ((2 * Math.PI * SIM_DRIVER.fs) ** 2 * SIM_MMS);   // 13.7 L
+  const vm = vasAddedMass({ fs: free.fs, fsMass: mass.fs, m: SIM_MASS, Sd: SIM_SD }).Vas;
+  const vb = vasSealed({ fs: free.fs, Qes: free.Qes, fc: box.fs, Qec: box.Qes, Vb: SIM_BOX }).Vas;
+  assert.ok(Math.abs(vm / Vas - 1) < 0.01, `added mass: ${vm * 1e3} L vs ${Vas * 1e3}`);
+  assert.ok(Math.abs(vb / Vas - 1) < 0.02, `sealed box: ${vb * 1e3} L vs ${Vas * 1e3}`);
+  const t = fromVas({ ...free, Vas: vm, Sd: SIM_SD });
+  assert.ok(Math.abs(t.Mms / SIM_MMS - 1) < 0.01, `Mms ${t.Mms}`);
 });

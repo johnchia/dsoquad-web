@@ -171,6 +171,7 @@ legend label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 dl.info { display: grid; grid-template-columns: 72px 1fr; gap: 3px 8px; margin: 0 0 8px; }
 dl.info dt { color: var(--muted); }
 dl.info dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+dl.info dt.sep, dl.info dt.sep + dd { border-top: 1px solid var(--border); padding-top: 5px; margin-top: 4px; }
 
 fieldset:disabled { opacity: 0.55; }
 

@@ -159,5 +159,19 @@ export function vasSealed({ fs, Qes, fc, Qec, Vb }) {
   return { Vas: Vb * ((fc * Qec) / (fs * Qes) - 1) };
 }
 
+const C_AIR = 346.1;   // m/s at 25 °C
+
+/**
+ * The rest of the Thiele-Small set once Vas is known, from the free-air fit {Re, fs, Qms, Qes},
+ * Vas (m³) and Sd (m²): Cms m/N, Mms kg, Rms kg/s, Bl T·m, η0 (reference efficiency, fraction),
+ * the half-space sensitivity for 1 W and for 2.83 V (into Re) at 1 m in dB SPL, and EBP.
+ */
+export function fromVas({ Re, fs, Qms, Qes, Vas, Sd }) {
+  const ws = 2 * Math.PI * fs, Cms = Vas / (RHO_C2 * Sd * Sd), Mms = 1 / (ws * ws * Cms);
+  const eta0 = (4 * Math.PI ** 2 / C_AIR ** 3) * fs ** 3 * Vas / Qes;
+  const spl1W = 112.02 + 10 * Math.log10(eta0);
+  return { Cms, Mms, Rms: ws * Mms / Qms, Bl: Math.sqrt(ws * Mms * Re / Qes), eta0, spl1W, spl2V83: spl1W + 10 * Math.log10(8 / Re), ebp: fs / Qes };
+}
+
 /** Amplifier output impedance from the open-circuit and loaded output levels into RL. */
 export const outputImpedance = (vOpen, vLoad, RL) => RL * (vOpen / vLoad - 1);

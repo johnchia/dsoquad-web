@@ -9,14 +9,14 @@ import { BodePlot } from './plot.js';
 import { DUTS } from './duts.js';
 import { cabs, carg, cx } from './detect.js';
 import * as Match from './match.js';
-import { fitDriver, impedance, model, reFromDc } from './speaker.js';
+import { coneArea, derive, fitDriver, fromVas, impedance, model, reFromDc, vasAddedMass, vasSealed } from './speaker.js';
 import { driverResponse, frd, MIN_POINTS } from './frd.js';
 
 const $ = (id) => document.getElementById(id);
 const STORE_KEY = 'dsoq.analyzer.v1';
 const DEFAULTS = {
   mode: 'response', from: 20, to: 20000, ppd: 10, level: 90, settleMs: 0, average: 2, coupling: 0, refine: true,
-  applyMatch: true, R: 47, zFrom: 10, zTo: 20000, sim: 'rc',
+  applyMatch: true, R: 47, zFrom: 10, zTo: 20000, sim: 'rc', vasMethod: 'mass', coneCm: 13, massG: 10, boxL: 10,
 };
 const MODES = { response: 'Frequency response', impedance: 'Impedance' };
 const SIM_FOR = { response: 'rc', impedance: 'speaker' };
@@ -57,6 +57,7 @@ export function initAnalyzer(ctx) {
 
   const fields = {
     from: $('an-from'), to: $('an-to'), ppd: $('an-ppd'), level: $('an-level'), settleMs: $('an-settle'), average: $('an-average'), R: $('an-r'),
+    coneCm: $('an-cone'), massG: $('an-mass'), boxL: $('an-box'),
   };
   const key = (k) => (s.mode === 'impedance' && (k === 'from' || k === 'to') ? (k === 'from' ? 'zFrom' : 'zTo') : k);
   const fillFields = () => { for (const [k, el] of Object.entries(fields)) el.value = s[key(k)]; };
@@ -64,7 +65,7 @@ export function initAnalyzer(ctx) {
     el.onchange = () => {
       let v = Number(el.value);
       if (k === 'from' || k === 'to') v = Math.round(Math.min(MAX_HZ, Math.max(MIN_HZ, v || DEFAULTS[key(k)])));
-      if (k === 'R') v = v > 0 ? v : DEFAULTS.R;
+      if (['R', 'coneCm', 'massG', 'boxL'].includes(k)) v = v > 0 ? v : DEFAULTS[k];
       s[key(k)] = v; el.value = v;
       save(STORE_KEY, s);
       update();
@@ -81,6 +82,7 @@ export function initAnalyzer(ctx) {
   const segSync = (id, v) => $(id).querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.value === String(v)));
   $('an-coupling').querySelectorAll('button').forEach((b) => { b.onclick = () => { s.coupling = Number(b.value); save(STORE_KEY, s); update(); }; });
   $('an-mode').querySelectorAll('button').forEach((b) => { b.onclick = () => setMode(b.value); });
+  $('an-vas-method').querySelectorAll('button').forEach((b) => { b.onclick = () => { s.vasMethod = b.value; save(STORE_KEY, s); update(); }; });
 
   const simSel = $('an-sim');
   simSel.innerHTML = Object.entries(DUTS).map(([k, d]) => `<option value="${k}">${d.label}</option>`).join('');
@@ -103,7 +105,8 @@ export function initAnalyzer(ctx) {
     if (run || !MODES[m]) return;
     s.mode = m;
     // In the simulator, switch to a circuit that suits the mode.
-    if (ctx.getSim() && SIM_FOR[m] && s.sim !== SIM_FOR[m] && s.sim !== 'through') { s.sim = SIM_FOR[m]; simSel.value = s.sim; applySim(); }
+    const suits = s.sim === 'through' || (m === 'impedance') === s.sim.startsWith('speaker');
+    if (ctx.getSim() && SIM_FOR[m] && !suits) { s.sim = SIM_FOR[m]; simSel.value = s.sim; applySim(); }
     save(STORE_KEY, s);
     plot.setPanes(PANES[m]);
     fillFields();
@@ -142,6 +145,31 @@ export function initAnalyzer(ctx) {
     } catch { return null; }
   }
 
+  /** Vas and the rest of the Thiele-Small set from this sweep's fit and the reference's: free air
+   * against added mass (the free one has the higher fs) or a sealed box (the lower). */
+  function vasHtml(a, b) {
+    const head = '<dt class="sep">Vas</dt>';
+    if (!b) return `${head}<dd>the reference sweep has no driver fit</dd>`;
+    const mass = s.vasMethod === 'mass';
+    const [free, other] = (a.params.fs > b.params.fs) === mass ? [a, b] : [b, a];
+    const shift = mass ? free.params.fs / other.params.fs : other.params.fs / free.params.fs;
+    if (!(shift > 1.02)) return `${head}<dd>now sweep ${mass ? `with the ${s.massG} g on the cone` : `in the ${s.boxL} L box`}; this sweep and the reference are alike</dd>`;
+    if (!(shift > 1.08)) return `${head}<dd>fs moved by only ${(100 * Math.abs(1 - shift)).toFixed(1)} % between the two sweeps: ${mass ? 'add more mass' : 'use a smaller box'} (aim for 25 % or more)</dd>`;
+    const P = free.params, D = free.derived, Sd = coneArea(s.coneCm / 100);
+    const Vas = mass ? vasAddedMass({ fs: P.fs, fsMass: other.params.fs, m: s.massG / 1000, Sd }).Vas
+      : vasSealed({ fs: P.fs, Qes: D.Qes, fc: other.params.fs, Qec: other.derived.Qes, Vb: s.boxL / 1000 }).Vas;
+    if (!(Vas > 0)) return `${head}<dd>no answer from these two sweeps (Qec below Qes?)</dd>`;
+    const t = fromVas({ Re: P.Re, fs: P.fs, Qms: P.Qms, Qes: D.Qes, Vas, Sd });
+    return `${head}<dd>${(Vas * 1e3).toPrecision(3)} L <span class="note">(free air fs ${fmtHz(P.fs)}, ${mass ? `with the mass` : 'in the box'} ${fmtHz(other.params.fs)}; Sd ${(Sd * 1e4).toFixed(0)} cm²)</span></dd>
+      <dt>Mms</dt><dd>${(t.Mms * 1e3).toFixed(1)} g</dd>
+      <dt>Cms</dt><dd>${(t.Cms * 1e3).toFixed(3)} mm/N</dd>
+      <dt>Rms</dt><dd>${t.Rms.toFixed(2)} kg/s</dd>
+      <dt>Bl</dt><dd>${t.Bl.toFixed(2)} T·m</dd>
+      <dt>η0</dt><dd>${(100 * t.eta0).toFixed(2)} %</dd>
+      <dt>Sensitivity</dt><dd>${t.spl1W.toFixed(1)} dB (1 W), ${t.spl2V83.toFixed(1)} dB (2.83 V) at 1 m <span class="note">(half space, from the model)</span></dd>
+      <dt>EBP</dt><dd>${t.ebp.toFixed(0)} <span class="note">(fs/Qes: under 50 sealed, over 100 vented)</span></dd>`;
+  }
+
   /** Readouts to refine in each mode: the −3 dB points, or for |Z| the √r0 points (half the
    * peak's height in dB above the base). */
   function refineReadouts(c) {
@@ -166,7 +194,13 @@ export function initAnalyzer(ctx) {
     $('an-mode-legend').textContent = MODES[s.mode];
     $('an-wiring-response').hidden = imp;
     $('an-wiring-impedance').hidden = !imp;
-    for (const id of ['an-r-row', 'an-re-row']) $(id).hidden = !imp;
+    for (const id of ['an-r-row', 'an-re-row', 'an-vas']) $(id).hidden = !imp;
+    segSync('an-vas-method', s.vasMethod);
+    $('an-mass-row').hidden = s.vasMethod !== 'mass';
+    $('an-box-row').hidden = s.vasMethod !== 'box';
+    $('an-vas-note').textContent = s.vasMethod === 'mass'
+      ? 'Sweep the driver in free air, lying flat, and press Keep as reference. Then stick a weighed mass evenly around the dust cap (Blu-Tack, or coins with a dab of it: about the cone\'s own, 10–20 g for a 6.5″) and sweep again. Cone: the effective diameter, the cone plus a third of the surround on each side.'
+      : 'Sweep the driver in free air and press Keep as reference. Then seal it into a closed box of known net volume (inside, less the driver and bracing; unstuffed) and sweep again. Cone: the effective diameter, the cone plus a third of the surround on each side.';
     $('an-estimate').textContent = `${p.points.length} points, about ${fmtS(p.seconds)}`;
     $('an-start').textContent = run && busy === 'sweep' ? 'Stop' : 'Start sweep';
     $('an-start').classList.toggle('primary', !run);
@@ -224,6 +258,7 @@ export function initAnalyzer(ctx) {
           <dt>Le</dt><dd>${fmtH(P.Le)}</dd>
           <dt>Fit</dt><dd>${(100 * fit.rms).toFixed(1)} % rms from the model</dd>`;
       } else html += '<dt>Driver</dt><dd>no resonance in the sweep: no Thiele-Small fit</dd>';
+      if (fit && ref.pts.length) html += vasHtml(fit, driverFit(points(ref)));
     }
     if (html && r.pts.some((x) => x.a.clip || x.b.clip)) html += '<dt>Clipped</dt><dd><span class="err">yes: some points are unreliable</span></dd>';
     $('an-readouts').innerHTML = html || '<dt>Results</dt><dd>–</dd>';
