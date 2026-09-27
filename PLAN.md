@@ -356,11 +356,97 @@ generator (external amplifier optional).
 **Needed from the owner for M6.6:** an RC or other known filter, a resistor for R (10–100 Ω, 1 %),
 a large bipolar capacitor, a driver with a datasheet, and any amplifier to try.
 
+### M7: Component measurement (an LCR meter) (about 1 week)
+
+**Goal:** measure resistors, capacitors and inductors the way a bench LCR meter does, from the
+impedance mode's wiring: the value in its series or parallel model, the loss (D, Q, ESR), and
+how they change with frequency, AC level and DC bias. The owner's first RC test (M6.6, 2026-09-27)
+showed the need: a "1 µF" ceramic read 0.996 µF at 100 Hz and 0.895 µF at 5 kHz, 4–8 % lower
+again at 15 % level, with 1.4–3 % loss. The impedance mode already measured that correctly;
+M7 makes it a first-class tool.
+
+**Why it works on this hardware**
+- Same wiring as M6's impedance mode: wave out → A → reference resistor R → B → the part →
+  ground. Z = R·B/(A−B) with the channel match applied (including the per-range gains), so the
+  generator's level and output impedance drop out.
+- Accuracy depends on how |Z| compares with R: the relative error in Z is the error in B/A times
+  (R + |Z|)/R, and B shrinks with |Z|/R. With B/A good to about 0.03 dB / 0.1° after the
+  match, |Z| between R/10 and 10·R gives about 1 %; the page recommends an R for the part and
+  frequency (from the first reading) and warns outside that window.
+- Frequencies 1 Hz – 100 kHz (the generator's clean range) and the level from the generator's
+  table amplitude (up to ~1.2 V peak). DC bias from the table's offset, 0 to ~2.5 V, when no
+  coupling capacitor is used.
+- **No firmware change.** Everything is `SET_WAVE`/`SET_GEN`/`SET_TIMEBASE`/`SET_CHANNEL`,
+  as in M6.
+
+**Measurement core** (`web/js/analyzer/lcr.js`, pure, tested under node)
+- **Equivalent circuits:** from Z at ω: Cs/Rs and Cp/Rp for capacitors, Ls/Rs and Lp/Rp for
+  inductors, R and its reactance for resistors; D = Rs/Xs, Q = 1/D, ESR, phase θ. Automatic
+  choice as on LCR meters: the sign of the reactance picks C or L, |Z| picks the model
+  (series below ~100 Ω, parallel above ~10 kΩ, in between the one with the smaller loss term),
+  with a manual override.
+- **Fixture compensation (open/short):** measured Z includes the scope's B input (1 MΩ ‖ its
+  input capacitance), stray capacitance of the leads and the contact resistance of the joins
+  (the owner's Wago). Standard LCR correction: an *open* sweep (the part removed) gives Zo, a
+  *short* sweep (the part replaced by a wire) gives Zs, and Z = (Zm − Zs) / (1 − (Zm − Zs)/Zo).
+  Kept per R and frequency list, in the browser (the fixture belongs to the bench, not the
+  DSO). Optional *load* step: a known precision resistor as the part trims R's value.
+- **Self-resonance:** for capacitors and inductors, the frequency where the reactance changes
+  sign inside the sweep (ESL above it for a capacitor; Cp for an inductor), from the phase zero
+  crossing, refined as in M6.
+- **Model fits:** capacitor C + ESR + ESL, inductor L + Rs + Cp, with the M6 Levenberg–Marquardt
+  code, for a one-line summary of an electrolytic or a choke.
+
+**Modes**
+1. **Spot (meter):** one frequency (preset 100 Hz, 120 Hz, 1 kHz, 10 kHz, 100 kHz or any) and
+   level, measured continuously (2–5 readings/s): a large primary value (e.g. "0.9253 µF Cs")
+   with the secondary (D, Q, ESR or θ), |Z|, the AC voltage across the part and the current
+   through it. Hold, and a tolerance check against a nominal value (e.g. 1 µF ± 10 % → pass/fail,
+   beep on the DSO optional) for sorting parts.
+2. **Frequency sweep:** C (or L, or R) and D (or Q, or ESR) against log frequency, the
+   self-resonant frequency, a reference trace for comparing parts.
+3. **Level sweep:** at one frequency, the value and loss against the AC voltage across the part
+   (class-2 ceramics: C rises with level; iron-core inductors: L rises then falls).
+4. **DC bias sweep:** the value against DC bias from the generator's offset (0 to ~2.5 V,
+   no coupling capacitor): the DC-bias drop of small ceramics. Higher bias needs an external
+   supply and is out of scope.
+
+**UI:** a third Analyzer mode, "Component", with the impedance wiring diagram (R choice
+highlighted), Open/Short/Load buttons with their status, the meter display for spot mode, and
+the M6 plot with the component panes for sweeps. CSV of every reading with the model used.
+
+**Simulator:** parts to measure: a film capacitor (ideal C, tiny ESR), a class-2 ceramic whose
+C depends on the AC voltage and frequency (a simple C(V, f) model matching the owner's
+measurement), an electrolytic (C, ESR, ESL), an inductor (L, Rs, Cp), a resistor, and the
+fixture parasitics (B's 1 MΩ ‖ 30 pF, 0.1 Ω contact, 10 pF stray) so open/short correction has
+work to do.
+
+**Steps**
+- [ ] M7.1 Hardware facts: the wave out's output impedance and current limit (sets the smallest
+  usable R; 10 Ω would ask 120 mA), B's input impedance (1 MΩ ‖ C, which loads high-Z parts),
+  and open/short sweeps of a Wago-and-leads fixture.
+- [ ] M7.2 `lcr.js` plus node tests: equivalent circuits, auto model choice, open/short/load
+  correction, self-resonance, the C/L model fits; against synthetic parts to < 0.5 %.
+- [ ] M7.3 Simulator parts and fixture; the Component mode with the frequency sweep and
+  open/short, end to end in the simulator.
+- [ ] M7.4 Spot (meter) mode with the tolerance check; level and DC bias sweeps.
+- [ ] M7.5 Docs (`docs/analyzer.md`: wiring, choosing R, compensation, accuracy limits) and
+  hardware verification (owner): a film capacitor and 1 % resistors from 10 Ω to 10 kΩ within
+  1 % (0.5 % for resistors) of an LCR meter or their marking; the owner's ceramic reproduces
+  its level dependence; an inductor within 2 %.
+
+**Exit criterion:** a film capacitor, a resistor and an inductor read within the M7.5 limits
+after open/short compensation, and the spot meter updates at ≥ 2 readings/s.
+
+**Needed from the owner:** a film capacitor (polyester or polypropylene, 100 nF–1 µF), 1 %
+resistors (10 Ω, 100 Ω, 1 kΩ, 10 kΩ), an inductor or choke, and, if available, an LCR meter
+reading of each for comparison.
+
 ### Release 1.0.1 (2026-09-24)
 - [x] Generator fix (in source, found by the owner 2026-09-24): after an analog frequency high enough to need a short table (e.g. 125 kHz, 16 points), a longer table for a low frequency was refused (`SET_WAVE` restarted the output at the old frequency: 512 × 125 kHz > 2 MS/s), and the page never sent the new frequency, so the output stayed stuck. Now a table that doesn't fit the running frequency turns the output off until `SET_GEN`. The page (live) also recovers on 1.0.0: on a refused table it switches the output off, reloads and starts. Verified on the DSO with 1.0.0: 125 kHz → 1 kHz works.
 - [x] Status screen (in source, not yet released): shows the □ + ○ exit hint only when an app is installed in APP3; otherwise it points at the page's Firmware… button for updates and DFU (▶/|| at power-on) for recovery. Release: bump `FW_VERSION`, commit, `make -C firmware/app release`, push, tag.
 
-**Rough total:** 4–6 weeks part-time to a solid v1 (M0–M5), plus 1–2 weeks for the analyzer (M6). M1 either confirms the approach within the first week or triggers the libopencm3 or bare-metal fallback.
+**Rough total:** 4–6 weeks part-time to a solid v1 (M0–M5), plus 1–2 weeks for the analyzer (M6) and about 1 week for component measurement (M7). M1 either confirms the approach within the first week or triggers the libopencm3 or bare-metal fallback.
 
 ---
 
