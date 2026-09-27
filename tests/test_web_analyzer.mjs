@@ -6,7 +6,7 @@ import * as P from '../web/js/protocol.js';
 import { analogActual, planPoints } from '../web/js/wavegen.js';
 import { USABLE, captureDiv, logFreqs, planPoint, planSweep, rateForDiv } from '../web/js/analyzer/sweep.js';
 import { analyse, cabs, carg, cdiv, cx, polar } from '../web/js/analyzer/detect.js';
-import { curve, readouts, refineFreqs } from '../web/js/analyzer/response.js';
+import { curve, phaseCrossings, readouts, refineFreqs } from '../web/js/analyzer/response.js';
 import { classical, coneArea, fitDriver, impedance, model, outputImpedance, reFromDc, vasAddedMass, vasSealed } from '../web/js/analyzer/speaker.js';
 
 const near = (a, b, rel, msg) => assert.ok(Math.abs(a - b) <= rel * Math.abs(b), `${msg}: ${a} vs ${b}`);
@@ -174,4 +174,16 @@ test('refinement sharpens the −3 dB points of a band-pass', () => {
   const r2 = readouts(pts([...coarse, ...extra].sort((a, b) => a - b)));
   near(r2.lowF, lo, 0.002, 'low −3 dB'); near(r2.highF, hi, 0.002, 'high −3 dB'); near(r2.peakF, f0, 0.002, 'peak');
   near(r.peakF, f0, 0.02, 'peak from the coarse grid');
+});
+
+test('phase crossing: −45° is fc of a first-order low-pass, unaffected by a gain error', () => {
+  const fc = 1 / (2 * Math.PI * 150 * 1e-6);
+  const pts = logFreqs(100, 10000, 10).map((f) => {
+    const h = cdiv(cx(1), cx(1, f / fc)), k = f > 900 ? 0.988 : 1;   // a 0.1 dB range step near fc
+    return { f, h: cx(h.re * k, h.im * k) };
+  });
+  const c = curve(pts);
+  const [f45] = phaseCrossings(c, -45);
+  assert.ok(Math.abs(f45 / fc - 1) < 0.01, `−45° at ${f45}`);
+  assert.ok(Math.abs(readouts(c).highF / fc - 1) > 0.015);   // while the −3 dB point moves
 });

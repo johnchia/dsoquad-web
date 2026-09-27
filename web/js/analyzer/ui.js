@@ -4,7 +4,7 @@
 import { download, stamp } from '../export.js';
 import { logFreqs, MAX_HZ, MIN_HZ, planPoint, planSweep } from './sweep.js';
 import { measureDc, measureRangeGains, runSweep } from './run.js';
-import { curve, readouts, refineFreqs } from './response.js';
+import { curve, phaseCrossings, readouts, refineFreqs } from './response.js';
 import { BodePlot } from './plot.js';
 import { DUTS } from './duts.js';
 import { cabs, carg, cx } from './detect.js';
@@ -201,6 +201,7 @@ export function initAnalyzer(ctx) {
         <dt>Peak</dt><dd>${q.peakDb.toFixed(2)} dB at ${fmtHz(q.peakF)}</dd>
         <dt>−3 dB low</dt><dd>${Number.isFinite(q.lowF) ? fmtHz(q.lowF) : 'below the sweep'}</dd>
         <dt>−3 dB high</dt><dd>${Number.isFinite(q.highF) ? fmtHz(q.highF) : 'above the sweep'}</dd>
+        ${[-45, 45].flatMap((d) => phaseCrossings(c, d).map((f) => `<dt>${d > 0 ? '+' : '−'}45° at</dt><dd>${fmtHz(f)} <span class="note">(fc of a 1st-order ${d < 0 ? 'low' : 'high'}-pass)</span></dd>`)).join('')}
         <dt>Source THD</dt><dd>${Number.isFinite(thdMax) ? `≤ ${(100 * thdMax).toFixed(1)} % (the generator's own)` : '–'}</dd>` : '';
     } else if (c.length) {
       const lo = c.reduce((a, b) => (b.zAbs < a.zAbs ? b : a)), hi = c.reduce((a, b) => (b.zAbs > a.zAbs ? b : a));

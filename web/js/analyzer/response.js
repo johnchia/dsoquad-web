@@ -86,3 +86,15 @@ export function refineFreqs(c, r, n = 3) {
   if (k > 0 && k < c.length - 1) { inside(k); inside(k + 1); }
   return [...out].sort((a, b) => a - b);
 }
+
+/** Frequencies where the (unwrapped) phase crosses `deg`, interpolated in log f. For a
+ * first-order filter −45° (low-pass) or +45° (high-pass) is exactly fc, whatever the gain errors. */
+export function phaseCrossings(c, deg) {
+  const out = [];
+  for (let i = 1; i < c.length; i++) {
+    const a = c[i - 1].phaseDeg - deg, b = c[i].phaseDeg - deg;
+    if (a === 0) out.push(c[i - 1].f);
+    else if (a * b < 0) out.push(crossAt(c, i, deg, 'phaseDeg'));
+  }
+  return out;
+}
