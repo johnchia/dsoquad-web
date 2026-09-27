@@ -8,12 +8,12 @@ import { Device } from '../../web/js/device.js';
 import { table } from '../../web/js/wavegen.js';
 import { planPoint, logFreqs } from '../../web/js/analyzer/sweep.js';
 import { analyse, cabs, carg, cdiv, clipped } from '../../web/js/analyzer/detect.js';
-import { TtyTransport } from './tty.mjs';
+import { openDevice } from './tty.mjs';
 
 const RANGE = 3, VDIV = 0.5;          // 0.5 V/div: the 0.04–2.72 V wave out in ~5.4 div
 const what = process.argv[2] ?? 'all';
-const dev = new Device(new TtyTransport(process.env.DSOQ_TTY));
-await dev.open();
+const dev = await openDevice(Device, process.env.DSOQ_TTY || undefined);
+process.on('unhandledRejection', (e) => { console.error(e); process.exit(1); });
 const cal = await Cal.loadFrom(dev);
 const offs = [0, 1].map((ch) => Cal.offsetFor(cal, ch, RANGE, 25));
 for (const ch of [0, 1]) await dev.setChannel(ch, RANGE, 0, offs[ch]);

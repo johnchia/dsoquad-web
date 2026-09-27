@@ -41,10 +41,10 @@ export function pickRange(cal, ch, ranges, cur, lo, hi, clip) {
 const rateOf = (div) => Math.floor((P.TIMER_HZ + Math.floor(div / 2)) / div);   // as frames report it
 
 /** The next frame at the plan's rate with the given channel settings, arriving after `after` (ms). */
-function nextFrame(dev, plan, st, coupling, after, signal) {
+function nextFrame(dev, plan, st, coupling, after, signal, skip = true) {
   const timeout = 4000 + 3 * plan.captureS * 1000 + Math.max(0, after - performance.now());
   return new Promise((resolve, reject) => {
-    let skipped = false;
+    let skipped = !skip;
     const done = (err, f) => {
       dev.removeEventListener('frame', on); clearTimeout(timer); signal?.removeEventListener('abort', abort);
       if (err) reject(err); else resolve(f);
@@ -88,9 +88,12 @@ export async function runSweep(ctx, points, opts = {}, onPoint = () => {}, signa
       throw new Error(`generator at ${plan.freq} Hz: ${s.waveLen} points ${s.genPsc}/${s.genArr}, planned ${plan.points} ${plan.genPsc}/${plan.genArr}`);
     }
     const settleUntil = performance.now() + 1000 * settleS(plan.freq, opts.settle);
+    let applied = null;   // channel settings of the last read: unchanged, no frame needs skipping
     const read = async () => {
-      for (let c = 0; c < 2; c++) await dev.setChannel(c, st[c].range, coupling, st[c].offset);
-      const f = await nextFrame(dev, plan, st, coupling, settleUntil, signal);
+      const key = JSON.stringify(st);
+      if (key !== applied) for (let c = 0; c < 2; c++) await dev.setChannel(c, st[c].range, coupling, st[c].offset);
+      const f = await nextFrame(dev, plan, st, coupling, settleUntil, signal, key !== applied);
+      applied = key;
       const K = plan.samples, start = f.stale;
       if (f.count - start < K) throw new Error(`frame of ${f.count} samples`);
       return [0, 1].map((c) => {

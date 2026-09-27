@@ -9,7 +9,8 @@ export const RECORD = 4096;                              // samples per frame
 export const USABLE = RECORD - 2 * STALE_SAMPLES;        // after the stale head, with a margin
 export const MIN_HZ = 1, MAX_HZ = MAX_ANALOG_HZ;
 const MAX_CAP_DIV = 65536;       // prescaler 0: every divider 2..65536 is reachable (≥ 1099 S/s)
-const OVERHEAD_S = 0.03;         // per capture: USB transfer and command round trips
+const FRAME_S = 0.046;           // per frame beyond the capture: transfer (the firmware sends ≤ 21.8/s)
+const COMMANDS_S = 0.06;         // per point: table, generator, rate, STATE round trips
 
 const gcd = (a, b) => { while (b) [a, b] = [b, a % b]; return a; };
 
@@ -102,8 +103,9 @@ export const settleS = (freq, userS = 0) => Math.max(3 / freq, 0.05, userS);
 /** Plans a whole sweep. opts: {settle (s), average (captures per point)} plus planPoint's. */
 export function planSweep(freqs, opts = {}) {
   const points = freqs.map((f) => planPoint(f, opts)).filter(Boolean);
-  const avg = opts.average ?? 1;
-  // Each point: settle, one capture to discard (the range may have changed), `avg` to keep.
-  const seconds = points.reduce((s, p) => s + settleS(p.freq, opts.settle) + (avg + 1) * (p.captureS + OVERHEAD_S), 0);
+  const avg = opts.average ?? 2;
+  // Each point: commands, settle, one frame to discard, `avg` to keep, and now and then one
+  // more for ranging (1.3 in all, measured). Each frame: the capture plus FRAME_S.
+  const seconds = points.reduce((s, p) => s + COMMANDS_S + settleS(p.freq, opts.settle) + (avg + 1.3) * (p.captureS + FRAME_S), 0);
   return { points, seconds };
 }
