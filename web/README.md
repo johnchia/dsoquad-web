@@ -48,7 +48,12 @@ by their tabs or anywhere along their lines.
   - **Impedance:** wave out → (capacitor) → A → R → B → the part to ground: Z = R·B/(A−B), as
     |Z| and phase. With a resonance in the sweep (a loudspeaker) it fits the driver model: Re,
     fs, Zmax, Qms, Qes, Qts, Le, drawn as a dashed trace. Re can also be measured at DC (no
-    capacitor).
+    capacitor). A second sweep against the reference, with a mass on the cone or in a sealed box,
+    gives Vas, Mms, Cms, Rms, Bl, η0, sensitivity and EBP.
+  - **Level:** one frequency, the generator's level stepped: an amplifier's gain and added THD
+    (the generator's own taken out) against its output, compression and the 1 % THD power.
+  - **Amplifier output impedance** (frequency response mode): an unloaded reference sweep and a
+    loaded one give Zout as R + L and the damping factor.
   - **Channel match** (both probes on the wave out, ~30 s, stored on the DSO): the two channels'
     gain and phase difference per frequency, and every range's gain relative to the others, so
     results are right even when A and B sit on different ranges of an uncalibrated DSO.
@@ -57,7 +62,9 @@ by their tabs or anywhere along their lines.
     on a measurement microphone's preamp it is the speaker's acoustic response; in impedance mode
     it is the driver's low-frequency roll-off modelled from the fit (fs, Qts; infinite baffle).
   - A dashed reference trace, CSV and PNG. In the simulator, pick a circuit (RC, RLC,
-    loudspeaker behind 47 Ω). Hardware scripts: `tools/node/sweep.mjs`, `tools/node/match.mjs`.
+    loudspeaker behind 47 Ω, with a mass or in a box, amplifiers). Hardware scripts:
+    `tools/node/sweep.mjs`, `match.mjs`, `level.mjs`. Wiring, procedures and limits:
+    [`docs/analyzer.md`](../docs/analyzer.md).
 
 Settings live in `localStorage` and are pushed to the device on every connect; the page owns
 the settings, not the device. Export/Import in the Device panel saves them as JSON. Channels, timebase and trigger sit in a strip across the bottom; Measure, Display, Generator, FFT and Device are in the sidebar.
