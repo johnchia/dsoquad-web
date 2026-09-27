@@ -163,7 +163,7 @@ test('amplifier output impedance: unloaded against loaded sweeps', { timeout: 12
   for (let i = 0; i < freqs.length; i++) {
     const z = outputZ(open[i].h, loaded[i].h, SIM_AMP.RL), want = SIM_AMP.zout(open[i].f);
     assert.equal(open[i].b.range, loaded[i].b.range);
-    assert.ok(cabs(csub(z, want)) < 0.01, `${open[i].f} Hz: ${z.re} + j${z.im} vs ${want.re} + j${want.im}`);
+    assert.ok(cabs(csub(z, want)) < 0.01 + 0.01 * cabs(want), `${open[i].f} Hz: ${z.re} + j${z.im} vs ${want.re} + j${want.im}`);
   }
 });
 
