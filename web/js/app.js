@@ -342,26 +342,24 @@ function frameTraces(f) {
 
 // ------------------------------------------------------------------ FFT
 
-let fftAvg = [null, null], fftKey = '', fftTraces = [];
+let fftAvg = {}, fftKey = '', fftTraces = [];
 
-function fftReset() { fftAvg = [null, null]; fftTraces = []; spectrumView.invalidate(); }
+function fftReset() { fftAvg = {}; fftTraces = []; spectrumView.invalidate(); }
 
-/** Spectrum of each shown channel, power-averaged over settings.fft.avg frames. */
+/** Spectrum of each shown trace (A, B, math), power-averaged over settings.fft.avg frames. */
 function updateSpectrum(f) {
   const s = settings.fft;
-  const key = `${f.rate}/${f.interleaved}/${f.ch.map((c) => `${c.range}.${c.coupling}`).join()}/${s.window}/${s.avg}`;
-  if (key !== fftKey) { fftKey = key; fftAvg = [null, null]; }
+  const key = `${f.rate}/${f.interleaved}/${f.ch.map((c) => `${c.range}.${c.coupling}`).join()}/${settings.math.op}/${s.window}/${s.avg}`;
+  if (key !== fftKey) { fftKey = key; fftAvg = {}; }
   fftTraces = [];
-  const v = frameVolts(f);
-  [[v.a, 0], [v.b, 1]].forEach(([volts, i]) => {
-    if (!settings.ch[i].on || !volts) return;
-    const sp = spectrum(volts.subarray(f.stale), s.window);
-    let acc = fftAvg[i];
-    if (!acc || acc.length !== sp.rms.length) acc = fftAvg[i] = Float64Array.from(sp.rms, (x) => x * x);
+  for (const t of frameTraces(f)) {
+    const sp = spectrum(t.data.subarray(f.stale), s.window);
+    let acc = fftAvg[t.key];
+    if (!acc || acc.length !== sp.rms.length) acc = fftAvg[t.key] = Float64Array.from(sp.rms, (x) => x * x);
     else { const a = 1 / s.avg; for (let j = 0; j < acc.length; j++) acc[j] += (sp.rms[j] ** 2 - acc[j]) * a; }
     const rms = Float64Array.from(acc, Math.sqrt);
-    fftTraces.push({ name: 'AB'[i], color: COLORS[i ? 'b' : 'a'], rms, binHz: sp.binHz(f.rate), peak: fftPeak(rms) });
-  });
+    fftTraces.push({ name: t.label, color: t.color, unit: t.unit, vdiv: t.vdiv, rms, binHz: sp.binHz(f.rate), peak: fftPeak(rms) });
+  }
   spectrumView.invalidate();
 }
 
@@ -457,7 +455,7 @@ function updateReadouts() {
       parts.push(`${d.label} ${m.limited.has(k) ? '&lt; ' : ''}${fmtSI(m[k], unit, d.digits ?? 3)}`);
     }
     const pk = settings.fft.on && peaks.get(t.label);
-    if (pk) parts.push(`FFT peak ${fmtSI(pk.peak.bin * pk.binHz, 'Hz', 4)} ${(20 * Math.log10(Math.max(pk.peak.rms, 1e-9))).toFixed(1)} dBV`);
+    if (pk) parts.push(`FFT peak ${fmtSI(pk.peak.bin * pk.binHz, 'Hz', 4)} ${(20 * Math.log10(Math.max(pk.peak.rms, 1e-9))).toFixed(1)} ${dbUnit(pk.unit)}`);
     if (t.key !== 'm') {
       const codes = t.key === 'a' ? f.a : f.b;
       let clipped = false;
@@ -503,6 +501,9 @@ function cursorTrace() {
   return settings.xy ? { label: 'B', posDiv: VDIV / 2, vdiv: ranges[c.range] ?? 1, unit: 'V' }
     : { label: key.toUpperCase(), posDiv: c.posDiv, vdiv: ranges[c.range] ?? 1, unit: 'V' };
 }
+
+/** dB unit of a trace's spectrum: dBV, or dB(V²) for A × B. */
+const dbUnit = (unit) => (unit === 'V' ? 'dBV' : `dB(${unit})`);
 
 const trigPosDiv = (f) => (f?.roll ? HDIV : settings.trigPosDiv);
 
@@ -552,10 +553,11 @@ const view = new ScopeView($('scope'), () => {
 
 const spectrumView = new SpectrumView($('spectrum'), () => {
   if (!fftTraces.length) return null;
-  const vmax = Math.max(...settings.ch.map((c, i) => (c.on ? ranges[c.range] ?? 1 : 0)));
-  const fsRms = 4 * vmax / Math.SQRT2;   // full-screen sine
+  const vmax = Math.max(...fftTraces.map((t) => t.vdiv));
+  const fsRms = 4 * vmax / Math.SQRT2;   // full-screen sine of the most zoomed-out trace
   return {
     traces: fftTraces,
+    unit: fftTraces.every((t) => t.unit === fftTraces[0].unit) ? dbUnit(fftTraces[0].unit) : 'dB',
     span: P.actualRate(sampleRate()) / 2 * settings.fft.span,
     scale: settings.fft.scale,
     refDb: Math.ceil(20 * Math.log10(fsRms) / 10) * 10,

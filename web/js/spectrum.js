@@ -6,8 +6,9 @@ const M = { l: 52, r: 12, t: 10, b: 22 };
 const XDIV = 10, YDIV = 10;
 
 export class SpectrumView {
-  /** model() returns {traces: [{name, color, rms: Float64Array, binHz, peak}], span (Hz),
-   *  scale: 'db'|'lin', refDb (top of screen, dBV), linMax (V at top)} or null */
+  /** model() returns {traces: [{name, color, unit, rms: Float64Array, binHz, peak}], span (Hz),
+   *  scale: 'db'|'lin', unit (dB axis label, e.g. 'dBV'), refDb (top of screen), linMax (at top)}
+   *  or null */
   constructor(canvas, model) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
@@ -54,7 +55,8 @@ export class SpectrumView {
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     for (let i = 0; i <= YDIV; i += 2) {
-      const label = m.scale === 'db' ? `${m.refDb - 10 * i} dBV` : fmtSI(m.linMax * (1 - i / YDIV), 'V', 2);
+      const lu = m.traces.every((t) => t.unit === m.traces[0].unit) ? m.traces[0].unit : '';
+      const label = m.scale === 'db' ? `${m.refDb - 10 * i} ${m.unit}` : fmtSI(m.linMax * (1 - i / YDIV), lu, 2);
       ctx.fillText(label, g.x0 - 5, g.y0 + i * g.ph / YDIV);
     }
     ctx.textAlign = 'center';
@@ -99,7 +101,8 @@ export class SpectrumView {
       const lines = [[`f ${fmtSI(f, 'Hz', 4)}`, '#e6edf3']];
       for (const t of m.traces) {
         const v = t.rms[Math.min(t.rms.length - 1, Math.round(f / t.binHz))];
-        lines.push([`${t.name} ${m.scale === 'db' ? `${(20 * Math.log10(Math.max(v, 1e-9))).toFixed(1)} dBV` : fmtSI(v, 'V')}`, t.color]);
+        const du = t.unit === 'V' ? 'dBV' : `dB(${t.unit})`;
+        lines.push([`${t.name} ${m.scale === 'db' ? `${(20 * Math.log10(Math.max(v, 1e-9))).toFixed(1)} ${du}` : fmtSI(v, t.unit)}`, t.color]);
       }
       ctx.font = '12px ui-monospace, monospace';
       ctx.textAlign = 'left';
