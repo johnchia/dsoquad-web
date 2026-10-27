@@ -10,6 +10,7 @@ import { openFwDialog, bundledFirmware } from './fw-ui.js';
 import * as Gen from './wavegen.js';
 import { WINDOWS, peak as fftPeak, spectrum } from './fft.js';
 import { SpectrumView } from './spectrum.js';
+import { findEdge } from './softtrig.js';
 import { autoset } from './autoset.js';
 import { MEASUREMENTS, measure } from './measure.js';
 import { download, frameCsv, sharedSettings, shareLink, snapshotPng, stamp } from './export.js';
@@ -24,6 +25,7 @@ for (let e = -7; e <= 0; e++) for (const m of [1, 2, 5]) TDIVS.push(+(m * 10 ** 
 TDIVS.splice(TDIVS.indexOf(2), 2);  // up to 1 s/div
 const FALLBACK_RANGES = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10];
 const STORE_KEY = 'dsoq.settings.v1';
+const TRIG_M = 4;   // trigger source: the math trace (after A, B, C, D)
 
 const DEFAULTS = {
   ch: [{ on: true, range: 4, coupling: 0, posDiv: 5 }, { on: true, range: 4, coupling: 0, posDiv: 2 }],
@@ -82,6 +84,7 @@ function mergeList(def, v, known) {
 function mergeSettings(v) {
   const s = merge(DEFAULTS, v);
   s.meas = mergeList(DEFAULTS.meas, v?.meas, Object.keys(MEASUREMENTS));
+  if (s.trig.source > TRIG_M || (s.trig.source === TRIG_M && s.math.op === 'off')) s.trig.source = 0;
   return s;
 }
 
@@ -110,6 +113,11 @@ function frameScale(ch, fc) {
 const autoMs = () => Math.round(clamp(20 * settings.tdiv * 1000, 100, 60000));
 const isPulse = (kind) => kind >= 4;
 
+/** Trigger source TRIG_M is the math trace. The FPGA can't trigger on it, so the device
+ * captures untriggered (Auto, forced after 1 ms) and the page finds the edge in each capture. */
+const mathTrig = () => settings.trig.source === TRIG_M && settings.math.op !== 'off';
+const devAutoMs = () => (mathTrig() ? 1 : autoMs());
+
 function trigLevelCode() {
   const t = settings.trig;
   if (t.source > 1) return 128;
@@ -130,7 +138,7 @@ const rolling = () => settings.mode === 'roll' || (settings.mode === 'auto' && s
 function acqMode() {
   if (!settings.running) return P.ACQ_STOP;
   if (rolling()) return P.ACQ_ROLL;
-  return settings.mode === 'normal' ? P.ACQ_NORMAL : P.ACQ_AUTO;
+  return settings.mode === 'normal' && !mathTrig() ? P.ACQ_NORMAL : P.ACQ_AUTO;
 }
 
 // ------------------------------------------------------------------ device commands
@@ -152,10 +160,10 @@ const send = {
     send.acq();       // auto timeout scales with the timebase
   },
   trigger() {
-    const t = settings.trig;
-    live()?.setTrigger(t.source, t.kind, trigLevelCode(), trigWidthSamples()).catch(report);
+    const t = settings.trig, hw = t.source === TRIG_M ? { source: 0, kind: 1 } : t;  // M: any (forced anyway)
+    live()?.setTrigger(hw.source, hw.kind, trigLevelCode(), trigWidthSamples()).catch(report);
   },
-  acq() { roll = null; if (!singleArmed) live()?.setAcq(acqMode(), autoMs()).catch(report); },
+  acq() { roll = null; if (!singleArmed) live()?.setAcq(acqMode(), devAutoMs()).catch(report); },
   gen() {
     const g = settings.gen, d = live();
     if (!d) return;
@@ -402,6 +410,7 @@ function onRoll(c) {
 }
 
 function onFrame(f) {
+  if (!f.roll && mathTrig() && !(f = mathTriggered(f))) return;
   lastFrame = f;
   if (settings.fft.on) updateSpectrum(f);
   lastFrameAt = performance.now();
@@ -410,10 +419,29 @@ function onFrame(f) {
   if (f.last || (singleArmed && f.triggered)) {
     singleArmed = false;
     settings.running = false;
+    if (!f.last && mathTrig()) send.acq();   // the device is still free-running: stop it
     syncControls();
   }
   view.invalidate();
   scheduleMeasure();
+}
+
+let mathTrigAt = 0;   // when the math trigger last fired
+
+/** Math trigger: frame f re-aligned on the first edge with a full screen around it; or
+ * untriggered (Auto, after autoMs() without an edge); or null (keep the last frame). */
+function mathTriggered(f) {
+  if (!settings.running && !singleArmed) return null;   // still in flight after a stop
+  const t = settings.trig, m = mathVolts(f), now = performance.now(), perDiv = settings.tdiv * f.rate;
+  const at = m ? findEdge(m, {
+    rising: t.kind !== 0, level: t.levelDiv * settings.math.vdiv, hyst: 0.1 * settings.math.vdiv,
+    from: f.stale + settings.trigPosDiv * perDiv, to: f.count - 1 - (HDIV - settings.trigPosDiv) * perDiv,
+  }) : -1;
+  let out;
+  if (at >= 0) { mathTrigAt = now; out = { ...f, pretrigger: at, triggered: true, auto: false }; } else if (singleArmed || settings.mode === 'normal' || now - mathTrigAt < autoMs()) return null;
+  else out = { ...f, triggered: false, auto: true };
+  voltsCache.set(out, frameVolts(f));
+  return out;
 }
 
 let measurePending = false, lastMeasure = 0;
@@ -520,7 +548,7 @@ const view = new ScopeView($('scope'), () => {
     traces,
     digital: { on: settings.digital },
     // Roll: the newest sample sits at the right edge and there's no trigger to mark.
-    trig: { source: src, levelDiv: settings.trig.levelDiv, posDiv: trigPosDiv(f), levelTrace: src < 2 ? settings.ch[src] : null },
+    trig: { source: src, levelDiv: settings.trig.levelDiv, posDiv: trigPosDiv(f), levelTrace: src < 2 ? settings.ch[src] : mathTrig() ? settings.math : null },
     roll: !!f?.roll,
     tdiv: settings.tdiv,
     xy: settings.xy && byKey('a') && byKey('b') ? { x: byKey('a'), y: byKey('b') } : null,
@@ -536,7 +564,7 @@ const view = new ScopeView($('scope'), () => {
     settings.math.posDiv = +clamp(value, 0, 8).toFixed(2);
     changed();
   } else if (id === 'trigLevel') {
-    const src = settings.ch[settings.trig.source];
+    const src = settings.trig.source === TRIG_M ? settings.math : settings.ch[settings.trig.source];
     settings.trig.levelDiv = +clamp(value - src.posDiv, -8, 8).toFixed(2);
     changed(send.trigger);
   } else if (id === 'trigPos') {
@@ -627,17 +655,19 @@ function syncControls() {
   $('tpos-out').textContent = `${s.trigPosDiv.toFixed(1)} div`;
   $('scale-t').textContent = `${fmtSI(s.tdiv, 's')}/div`;
 
-  const t = s.trig;
+  const t = s.trig, onM = t.source === TRIG_M, levelShown = t.source < 2 || onM;
   segSet('trig-source', t.source);
+  document.querySelector('.seg[data-for="trig-source"] button[value="4"]').disabled = s.math.op === 'off';
+  [...$('trig-kind').options].forEach((o) => { o.disabled = onM && +o.value > 1; });   // M: edges only
   $('trig-kind').value = t.kind;
-  $('trig-level-row').hidden = t.source > 1;
+  $('trig-level-row').hidden = !levelShown;
   $('trig-level').value = t.levelDiv;
-  const vdiv = ranges[s.ch[Math.min(t.source, 1)].range] ?? 1;
-  $('trig-level-out').textContent = fmtSI(t.levelDiv * vdiv, 'V');
+  const vdiv = onM ? s.math.vdiv : ranges[s.ch[Math.min(t.source, 1)].range] ?? 1, tu = onM ? MATH_OPS[s.math.op]?.unit ?? 'V' : 'V';
+  $('trig-level-out').textContent = fmtSI(t.levelDiv * vdiv, tu);
   $('trig-width-row').hidden = !isPulse(t.kind);
   if (document.activeElement !== $('trig-width')) $('trig-width').value = t.widthUs;
   const kindName = $('trig-kind').selectedOptions[0]?.textContent ?? '';
-  $('scale-trig').textContent = `T ${'ABCD'[t.source]} ${kindName.toLowerCase()}${t.source < 2 ? ` ${fmtSI(t.levelDiv * vdiv, 'V')}` : ''}`;
+  $('scale-trig').textContent = `T ${'ABCDM'[t.source]} ${kindName.toLowerCase()}${levelShown ? ` ${fmtSI(t.levelDiv * vdiv, tu)}` : ''}`;
 
   const g = s.gen, analog = g.shape !== 'off' && g.shape !== 'square';
   segSet('gen-shape', g.shape);
@@ -724,7 +754,11 @@ function bind() {
   $('fft-window').onchange = (e) => { settings.fft.window = e.target.value; fftReset(); changed(); };
   $('fft-span').onchange = (e) => { settings.fft.span = +e.target.value; changed(); };
   $('fft-avg').onchange = (e) => { settings.fft.avg = +e.target.value; fftReset(); changed(); };
-  $('math-op').onchange = (e) => { settings.math.op = e.target.value; changed(send.rate); };
+  $('math-op').onchange = (e) => {
+    settings.math.op = e.target.value;
+    if (settings.math.op === 'off' && settings.trig.source === TRIG_M) settings.trig.source = 0;
+    changed(send.rate);
+  };
   $('math-vdiv').onchange = (e) => { settings.math.vdiv = +e.target.value; changed(); };
   $('xy-on').onchange = (e) => { settings.xy = e.target.checked; changed(send.rate); };
   $('meas-chips').onclick = (e) => {
@@ -747,7 +781,11 @@ function bind() {
     if (!b) return;
     const v = +b.value, name = seg.dataset.for;
     if (name === 'a-coupling' || name === 'b-coupling') { const i = name[0] === 'a' ? 0 : 1; settings.ch[i].coupling = v; changed(() => send.channel(i)); }
-    if (name === 'trig-source') { settings.trig.source = v; changed(send.trigger); }
+    if (name === 'trig-source') {
+      settings.trig.source = v;
+      if (v === TRIG_M && settings.trig.kind > 1) settings.trig.kind = 1;
+      changed(() => { send.trigger(); send.acq(); });   // M runs the device in Auto
+    }
     if (name === 'gen-shape') {
       settings.gen.shape = b.value;
       if (b.value !== 'off' && b.value !== 'square' && settings.gen.freq > Gen.MAX_ANALOG_HZ) settings.gen.freq = Gen.MAX_ANALOG_HZ;
@@ -876,7 +914,8 @@ function single() {
   if (!dev) return;
   singleArmed = true;
   settings.running = false;
-  dev.setAcq(P.ACQ_SINGLE, autoMs()).catch(report);
+  // Math trigger: free-run until the page finds an edge, then stop.
+  if (mathTrig()) dev.setAcq(P.ACQ_AUTO, devAutoMs()).catch(report); else dev.setAcq(P.ACQ_SINGLE, autoMs()).catch(report);
   syncControls();
 }
 
